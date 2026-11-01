@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">LexiCore</string>
     <string name="title_activity_main">LexiCore</string>
-    <string name="package_name">com.yourname.lexicore</string>
-    <string name="custom_url_scheme">com.yourname.lexicore</string>
+    <string name="package_name">com.lexicore.learner</string>
+    <string name="custom_url_scheme">com.lexicore.learner</string>
 </resources>

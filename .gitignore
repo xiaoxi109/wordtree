@@ -59,3 +59,8 @@ public/tts/onnx/esm/
 public/tts/onnx/*.map
 # Threaded WASM not needed (numThreads=1)
 public/tts/onnx/ort-wasm-simd-threaded*
+
+# APK build artifacts (local distribution)
+apk/
+*.apk
+*.aab

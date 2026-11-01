@@ -124,3 +124,9 @@ export function wordsByGrade(): Record<GradeId, Word[]> {
   }
   return out
 }
+
+/** 整表只构建一次：年级页 / 人教首页共用同一份缓存。 */
+let cachedByGrade: Record<GradeId, Word[]> | null = null
+export function getWordsByGrade(): Record<GradeId, Word[]> {
+  return (cachedByGrade ??= wordsByGrade())
+}

@@ -1,0 +1,154 @@
+import { CapacitorHttp } from '@capacitor/core'
+import type { LlmConfig } from '../config/llm'
+
+export type LlmErrorKind = 'auth' | 'rate' | 'network' | 'server' | 'json' | 'empty'
+
+/** 带分类的 LLM 错误，UI 据此给出可操作提示。 */
+export class LlmError extends Error {
+  kind: LlmErrorKind
+  constructor(kind: LlmErrorKind, message: string) {
+    super(message)
+    this.name = 'LlmError'
+    this.kind = kind
+  }
+}
+
+export function llmErrorMessage(err: unknown): string {
+  if (err instanceof LlmError) {
+    switch (err.kind) {
+      case 'auth':
+        return 'API Key 无效或余额不足，请到「设置」检查配置'
+      case 'rate':
+        return '请求过于频繁，已超出服务端速率限制，请稍后重试'
+      case 'network':
+        return '网络连接失败，请检查网络或 API 地址'
+      case 'server':
+        return '服务端返回错误，请稍后重试'
+      case 'json':
+        return '模型返回内容无法解析，请重试'
+      case 'empty':
+        return '模型返回内容为空，请重试'
+    }
+  }
+  if (err instanceof Error && err.message === 'canceled') return '已取消'
+  return '生成失败，请重试'
+}
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+export interface ChatJsonOptions {
+  temperature?: number
+  maxTokens?: number
+  /** 毫秒；Android 原生 Http 生效，Web 回退用 AbortController */
+  timeoutMs?: number
+}
+
+const DEFAULT_TIMEOUT = 90_000
+
+/**
+ * 调用 OpenAI 兼容 chat/completions 并解析出 JSON。
+ * Android 上走 CapacitorHttp 原生实现（绕过 WebView CORS），Web 上回退 fetch。
+ */
+export async function chatJSON(
+  cfg: LlmConfig,
+  messages: ChatMessage[],
+  opts: ChatJsonOptions = {},
+): Promise<Record<string, unknown>> {
+  const url = `${cfg.baseUrl}/chat/completions`
+  const body = {
+    model: cfg.model,
+    messages,
+    temperature: opts.temperature ?? 0.7,
+    max_tokens: opts.maxTokens ?? 3000,
+    response_format: { type: 'json_object' },
+  }
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${cfg.apiKey}`,
+  }
+
+  const timeout = opts.timeoutMs ?? DEFAULT_TIMEOUT
+  let raw: string
+
+  try {
+    const resp = await CapacitorHttp.request({
+      url,
+      method: 'POST',
+      headers,
+      data: body,
+      responseType: 'text',
+      connectTimeout: 15_000,
+      readTimeout: timeout,
+    })
+    if (resp.status === 401 || resp.status === 403) throw new LlmError('auth', `HTTP ${resp.status}`)
+    if (resp.status === 429) throw new LlmError('rate', 'HTTP 429')
+    if (resp.status >= 500) throw new LlmError('server', `HTTP ${resp.status}`)
+    if (resp.status >= 400) throw new LlmError('network', `HTTP ${resp.status}: ${excerpt(resp.data)}`)
+    raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data)
+  } catch (e) {
+    if (e instanceof LlmError) throw e
+    if (isTimeout(e)) throw new LlmError('network', 'request timeout')
+    throw new LlmError('network', errorText(e))
+  }
+
+  const content = extractContent(raw)
+  if (!content) throw new LlmError('empty', 'empty content')
+  return extractJson(content)
+}
+
+/** 从响应体里取出 assistant 文本（兼容 data 已是对象 / 字符串两种情况）。 */
+function extractContent(raw: string): string {
+  let parsed: any
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return raw.trim()
+  }
+  const msg = parsed?.choices?.[0]?.message
+  const content = msg?.content
+  if (typeof content === 'string') return content.trim()
+  if (Array.isArray(content)) {
+    // 某些服务返回分片 content: [{type:'text', text:'...'}]
+    return content
+      .map((c: any) => (typeof c?.text === 'string' ? c.text : ''))
+      .join('')
+      .trim()
+  }
+  return ''
+}
+
+/** 容错提取 JSON 对象：剥掉代码块围栏、截取首尾大括号。 */
+function extractJson(content: string): Record<string, unknown> {
+  const cleaned = content.replace(/^\s*```(?:json)?/i, '').replace(/```\s*$/, '').trim()
+  const candidates = [cleaned]
+  const start = cleaned.indexOf('{')
+  const end = cleaned.lastIndexOf('}')
+  if (start >= 0 && end > start) candidates.push(cleaned.slice(start, end + 1))
+
+  for (const c of candidates) {
+    try {
+      const obj = JSON.parse(c)
+      if (obj && typeof obj === 'object') return obj as Record<string, unknown>
+    } catch {
+      /* try next */
+    }
+  }
+  throw new LlmError('json', 'JSON parse failed')
+}
+
+function isTimeout(e: unknown): boolean {
+  const msg = errorText(e).toLowerCase()
+  return msg.includes('timeout') || msg.includes('timed out') || msg.includes('aborted')
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+function excerpt(v: unknown): string {
+  const s = typeof v === 'string' ? v : JSON.stringify(v ?? '')
+  return s.slice(0, 200)
+}

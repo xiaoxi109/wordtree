@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 Web 端 tailwind 设计基线保持一致：森林绿 + 暖纸色 -->
+    <color name="colorPrimary">#236553</color>
+    <color name="colorPrimaryDark">#1C5144</color>
+    <color name="colorAccent">#D9F27C</color>
+    <color name="appCanvas">#F6F3EA</color>
+    <color name="appCanvasDark">#0E100C</color>
+</resources>

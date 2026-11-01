@@ -22,12 +22,15 @@ allprojects {
         google()
         mavenCentral()
     }
-    // 强制所有模块使用 JDK 17 编译（含 capacitor-android 库），避免其默认要求的 21。
-    plugins.withType(com.android.build.gradle.BasePlugin).configureEach {
-        android {
-            compileOptions {
-                sourceCompatibility JavaVersion.VERSION_17
-                targetCompatibility JavaVersion.VERSION_17
+    // 统一用 JDK 17 编译所有模块：Capacitor 8 的部分插件默认声明 21，
+    // 而本机 Gradle JVM 为 17（在评估结束后覆盖，保证最后生效）。
+    afterEvaluate { project ->
+        if (project.extensions.findByName('android') != null) {
+            project.android {
+                compileOptions {
+                    sourceCompatibility JavaVersion.VERSION_17
+                    targetCompatibility JavaVersion.VERSION_17
+                }
             }
         }
     }

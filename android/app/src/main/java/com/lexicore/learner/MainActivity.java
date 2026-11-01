@@ -1,4 +1,4 @@
-package com.yourname.lexicore;
+package com.lexicore.learner;
 
 import android.annotation.SuppressLint;
 import android.content.res.AssetManager;

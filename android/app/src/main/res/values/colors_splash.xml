@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 启动页图标配色（浅色画布） -->
+    <color name="splashMark">#236553</color>
+    <color name="splashDot">#D9F27C</color>
+</resources>

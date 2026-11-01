@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色启动页：深绿字标 + lime 点，保证在深色画布上可见 -->
+    <color name="splashMark">#8FD3B6</color>
+    <color name="splashDot">#D9F27C</color>
+</resources>

@@ -386,6 +386,8 @@ export function useSpeech() {
           setSpeaking(false)
           return
         }
+        // 等待模型期间可能已被 stop() / 新的一句取代
+        if (id !== reqIdShared) return
 
         setSpeaking(true)
         let audioBlob: Blob
@@ -399,6 +401,7 @@ export function useSpeech() {
             ),
           ])
         } catch (pe) {
+          if (id !== reqIdShared) return
           const pm = pe instanceof Error ? pe.message : String(pe)
           console.error('Piper predict failed, fallback to system TTS:', pe, pm)
           setSpeaking(false)
@@ -406,6 +409,8 @@ export function useSpeech() {
           fallbackSpeechSynthesis(text, rate, onEnded, lang)
           return
         }
+
+        if (id !== reqIdShared) return
 
         // 主路径：<audio> 元素播放 blob wav（真机此前验证可正常出声）。
         // WebView 对 blob:wav 的 <audio> 支持稳定，且点击手势内 play() 不受自动播放限制。
@@ -450,6 +455,7 @@ export function useSpeech() {
           })
         }
       } catch (err) {
+        if (id !== reqIdShared) return
         console.error('Piper TTS speak failed:', err)
         setSpeaking(false)
         // ensureSession/downloadModel 失败（模型未就绪且重试失败）：回退系统 TTS，保证至少能出声。
@@ -460,6 +466,8 @@ export function useSpeech() {
   )
 
   const stop = useCallback(() => {
+    // 使所有在途 speak（仍在等模型/合成）失效，避免停止后又冒出上一句
+    reqIdShared += 1
     if (!isCapacitor) {
       // 浏览器：停止原生语音合成
       if (synthAvailable) window.speechSynthesis.cancel()

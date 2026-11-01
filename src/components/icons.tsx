@@ -63,6 +63,13 @@ export const SearchIcon = (p: P) => (
   </svg>
 )
 
+export const SlidersIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+    <path d="M1 14h6M9 8h6M17 16h6" />
+  </svg>
+)
+
 export const CheckIcon = (p: P) => (
   <svg {...base(p)}>
     <path d="M20 6 9 17l-5-5" />
@@ -164,8 +171,7 @@ export const EyeOffIcon = (p: P) => (
   </svg>
 )
 
-export const CheckCheckIcon = (p: P) => (
-  <svg {...base(p)}>
+export const CheckCheckIcon = (p: P) => (  <svg {...base(p)}>
     <path d="M18 6 7 17l-5-5" />
     <path d="m22 10-7.5 7.5L13 16" />
   </svg>
@@ -179,5 +185,67 @@ export const ListIcon = (p: P) => (
     <line x1="3" x2="3.01" y1="6" y2="6" />
     <line x1="3" x2="3.01" y1="12" y2="12" />
     <line x1="3" x2="3.01" y1="18" y2="18" />
+  </svg>
+)
+
+export const UserIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </svg>
+)
+
+export const GearIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+)
+
+export const TrashIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M3 6h18" />
+    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <line x1="10" x2="10" y1="11" y2="17" />
+    <line x1="14" x2="14" y1="11" y2="17" />
+  </svg>
+)
+
+export const MoreIcon = (p: P) => (
+  <svg {...base(p)}>
+    <circle cx="5" cy="12" r="1.2" />
+    <circle cx="12" cy="12" r="1.2" />
+    <circle cx="19" cy="12" r="1.2" />
+  </svg>
+)
+
+export const BookOpenIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M12 7v14" />
+    <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+  </svg>
+)
+
+export const ArrowLeftIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="m12 19-7-7 7-7" />
+    <path d="M19 12H5" />
+  </svg>
+)
+
+export const ChevronRightIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="m9 18 6-6-6-6" />
+  </svg>
+)
+
+export const SparklesIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z" />
+    <path d="M5 3v4" />
+    <path d="M19 17v4" />
+    <path d="M3 5h4" />
+    <path d="M17 19h4" />
   </svg>
 )

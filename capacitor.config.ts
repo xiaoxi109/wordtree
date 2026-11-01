@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.yourname.lexicore',
+  appId: 'com.lexicore.learner',
   appName: 'LexiCore',
   webDir: 'dist',
   server: {

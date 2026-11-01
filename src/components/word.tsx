@@ -1,16 +1,22 @@
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { CATEGORIES, groupByCategory } from '../data'
 import type { CategoryId, Level, Word } from '../data'
 import { GRADE_STYLE, GRADES } from '../data/grades'
 import { useSpeech } from '../hooks/useSpeech'
-import { CheckIcon, SearchIcon, SpeakerIcon, XIcon } from './icons'
+import { POS_GROUPS, posLabel, posShort, type PosId } from '../lib/pos'
+import { DisplayModeToggle, type DisplayMode } from './display'
+import { CheckIcon, SearchIcon, SlidersIcon, SpeakerIcon, XIcon } from './icons'
+import { Sheet } from './Sheet'
 
 export const LEVEL_STYLE: Record<Level, { badge: string; dot: string }> = {
-  'Pre-A1': { badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300', dot: 'bg-emerald-500' },
-  A1: { badge: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300', dot: 'bg-sky-500' },
-  A2: { badge: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300', dot: 'bg-violet-500' },
-  B1: { badge: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300', dot: 'bg-amber-500' },
-  B2: { badge: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300', dot: 'bg-rose-500' },
+  'Pre-A1': {
+    badge: 'bg-emerald-100/80 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+    dot: 'bg-emerald-500',
+  },
+  A1: { badge: 'bg-sky-100/80 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300', dot: 'bg-sky-500' },
+  A2: { badge: 'bg-violet-100/80 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300', dot: 'bg-violet-500' },
+  B1: { badge: 'bg-amber-100/80 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300', dot: 'bg-amber-500' },
+  B2: { badge: 'bg-rose-100/80 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300', dot: 'bg-rose-500' },
 }
 
 // 年级徽标：人教词表显示「小学 / 初一 / 初二 …」而非 CEFR 等级。
@@ -20,7 +26,7 @@ export function GradeBadge({ grade }: { grade: string }) {
   const s = GRADE_STYLE[grade as keyof typeof GRADE_STYLE]
   if (!s) return null
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${s.badge}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full border border-black/5 px-2 py-0.5 text-[11px] font-bold tracking-wide dark:border-white/10 ${s.badge}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
       {GRADE_LABEL[grade] ?? grade}
     </span>
@@ -62,14 +68,24 @@ export const CAT_DOT: Record<CategoryId, string> = {
 export function LevelBadge({ level }: { level: Level }) {
   const s = LEVEL_STYLE[level]
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${s.badge}`}>
+    <span className={`inline-flex items-center gap-1 rounded-full border border-black/5 px-2 py-0.5 text-[11px] font-bold tracking-wide dark:border-white/10 ${s.badge}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
       {level}
     </span>
   )
 }
 
-export function SpeakerBtn({ text, className = '', rate }: { text: string; className?: string; rate?: number }) {
+export function SpeakerBtn({
+  text,
+  className = '',
+  rate,
+  iconSize = 18,
+}: {
+  text: string
+  className?: string
+  rate?: number
+  iconSize?: number
+}) {
   const { speak, speaking, loading, preload, downloadStatus } = useSpeech()
   return (
     <button
@@ -87,12 +103,42 @@ export function SpeakerBtn({ text, className = '', rate }: { text: string; class
         speak(text, rate)
       }}
       title={loading ? '正在加载语音模型…' : '发音'}
-      className={`inline-flex items-center justify-center rounded-full p-2 text-brand-600 transition hover:bg-brand-50 hover:text-brand-700 active:scale-95 dark:text-brand-300 dark:hover:bg-brand-500/10 ${
+      aria-label="朗读"
+      className={`inline-flex items-center justify-center rounded-full p-2 text-brand-700 transition hover:bg-brand-50 hover:text-brand-800 active:scale-95 dark:text-brand-300 dark:hover:bg-brand-500/10 ${
         speaking || loading ? 'animate-pulse' : ''
       } ${className}`}
     >
-      <SpeakerIcon width={18} height={18} />
+      <SpeakerIcon width={iconSize} height={iconSize} />
     </button>
+  )
+}
+
+/* ----------------------------- Progress summary ----------------------------- */
+/**
+ * 页头掌握进度条：掌握率 + 已掌握/总词数 + 细进度条。
+ * 首页与人教主页面用它替代原来的深色进度卡，更轻、不抢内容。
+ */
+export function ProgressSummary({ done, total, pct }: { done: number; total: number; pct: number }) {
+  return (
+    <div>
+      <div className="flex items-baseline gap-2">
+        <span className="font-display text-[30px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
+          {pct}
+          <span className="ml-0.5 text-base font-normal text-slate-400">%</span>
+        </span>
+        <span className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">掌握率</span>
+        <span className="ml-auto shrink-0 text-[12px] font-semibold text-slate-500 dark:text-slate-400">
+          {done}
+          <span className="font-normal text-slate-400"> / {total} 已掌握</span>
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-900/[0.07] dark:bg-white/10">
+        <div
+          className="h-full rounded-full bg-brand-500 transition-all duration-500 ease-spring"
+          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -100,26 +146,41 @@ export function SpeakerBtn({ text, className = '', rate }: { text: string; class
 export function WordCard({
   word,
   mastered,
+  mode = 'both',
   onOpen,
   onToggleMastered,
 }: {
   word: Word
   mastered: boolean
+  /** 列表显示语言：只影响卡片本身，详情保持完整 */
+  mode?: DisplayMode
   onOpen: () => void
   onToggleMastered: () => void
 }) {
+  const showEn = mode !== 'zh'
+  const showZh = mode !== 'en'
+  const pos = posShort(word)
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="group relative flex flex-col items-start gap-1 rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-md dark:border-slate-700 dark:bg-slate-800/60 dark:hover:border-brand-500/50"
+      className={`group relative flex flex-col items-start gap-1 overflow-hidden rounded-[16px] border p-3 text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-soft active:scale-[0.995] ${
+        mastered
+          ? 'border-brand-200/60 bg-brand-50/40 dark:border-brand-500/20 dark:bg-brand-500/5'
+          : 'border-slate-200/60 bg-white/65 hover:border-brand-300/60 hover:bg-white dark:border-slate-700/50 dark:bg-slate-800/45 dark:hover:border-brand-500/35 dark:hover:bg-slate-800/70'
+      }`}
     >
-      <div className="flex w-full items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
+      <div className="relative flex w-full items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {word.grade ? <GradeBadge grade={word.grade} /> : <LevelBadge level={word.level} />}
           {word.common && (
-            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+            <span className="rounded-full border border-amber-200/60 bg-amber-100/70 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
               常用
+            </span>
+          )}
+          {pos && (
+            <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-300">
+              {pos}
             </span>
           )}
         </div>
@@ -127,6 +188,7 @@ export function WordCard({
           role="button"
           tabIndex={0}
           title={mastered ? '已掌握' : '标记为已掌握'}
+          aria-label={mastered ? '已掌握' : '标记为已掌握'}
           onClick={(e) => {
             e.stopPropagation()
             onToggleMastered()
@@ -138,27 +200,116 @@ export function WordCard({
               onToggleMastered()
             }
           }}
-          className={`flex h-6 w-6 items-center justify-center rounded-full border transition ${
+          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
             mastered
-              ? 'border-emerald-500 bg-emerald-500 text-white'
-              : 'border-slate-300 text-transparent hover:border-emerald-400 dark:border-slate-600'
+              ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
+              : 'border-slate-300/70 bg-white/40 text-transparent hover:border-brand-400 hover:text-brand-400 dark:border-slate-600 dark:bg-slate-900/30'
           }`}
         >
           <CheckIcon width={14} height={14} />
         </span>
       </div>
-      <div className="mt-1 flex w-full min-w-0 items-baseline justify-between gap-2">
-        <span className="min-w-0 break-words text-lg font-bold text-slate-800 dark:text-slate-100">{word.word}</span>
-        <SpeakerBtn text={word.word} />
+      <div className="relative mt-1.5 flex w-full min-w-0 items-baseline justify-between gap-2">
+        {showEn ? (
+          <span className="min-w-0 break-words font-display text-[18px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-slate-50">
+            {word.word}
+          </span>
+        ) : (
+          <span className="min-w-0 break-words text-base font-bold leading-snug text-slate-900 dark:text-slate-50">
+            {word.meaning}
+          </span>
+        )}
+        {showEn && <SpeakerBtn text={word.word} iconSize={16} className="-mr-1 shrink-0" />}
       </div>
-      <span className="text-sm text-slate-400 dark:text-slate-500">{word.ipa}</span>
-      <span className="line-clamp-1 text-sm text-slate-600 dark:text-slate-300">{word.meaning}</span>
+      {showEn && <span className="relative text-[11px] text-slate-400 dark:text-slate-500">{word.ipa}</span>}
+      {showZh && (
+        <span
+          className={`relative text-[12px] leading-relaxed text-slate-500 dark:text-slate-400 ${
+            showEn ? 'line-clamp-1' : 'line-clamp-2'
+          }`}
+        >
+          {word.meaning}
+        </span>
+      )}
     </button>
   )
 }
 
-/* ----------------------------- Detail modal ----------------------------- */
-export function WordDetail({
+/* ----------------------------- Detail body（整页展示） ----------------------------- */
+export function WordDetailBody({ word, mastered }: { word: Word; mastered: boolean }) {
+  const pos = posShort(word)
+
+  return (
+    <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="eyebrow">{word.grade ? 'PEP · 人教教材' : 'CEFR · 分级词库'}</p>
+          <h2 className="mt-1.5 break-words font-display text-[34px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
+            {word.word}
+          </h2>
+          <p className="mt-2 text-[13px] text-slate-400">{word.ipa}</p>
+        </div>
+        <SpeakerBtn
+          text={word.word}
+          rate={0.85}
+          iconSize={22}
+          className="!h-12 !w-12 shrink-0 !bg-brand-50 !p-0 dark:!bg-brand-500/10"
+        />
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-1.5">
+        {word.grade ? <GradeBadge grade={word.grade} /> : <LevelBadge level={word.level} />}
+        {pos && (
+          <span className="rounded-full border border-slate-200/60 bg-white/70 px-2 py-0.5 text-[11px] font-bold text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-300">
+            {pos}
+          </span>
+        )}
+        {word.common && (
+          <span className="rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
+            常用词
+          </span>
+        )}
+        {mastered && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-brand-200/70 bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 dark:border-brand-500/25 dark:bg-brand-500/10 dark:text-brand-300">
+            <CheckIcon width={11} height={11} />
+            已掌握
+          </span>
+        )}
+      </div>
+
+      <div className="surface-inset mt-4 p-4">
+        <p className="text-lg font-semibold leading-relaxed text-slate-800 dark:text-slate-100">{word.meaning}</p>
+      </div>
+
+      <p className="mb-2.5 mt-6 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+        Examples · 例句
+      </p>
+      {word.examples.length > 0 ? (
+        <ul className="space-y-3">
+          {word.examples.map((ex, i) => (
+            <li key={i} className="surface px-4 py-3.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-display text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">{ex.en}</p>
+                <SpeakerBtn text={ex.en} rate={0.9} iconSize={16} className="-mr-1 -mt-1 shrink-0" />
+              </div>
+              <p className="mt-1 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">{ex.zh}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="rounded-[18px] border border-dashed border-slate-300/80 py-6 text-center text-sm text-slate-400 dark:border-slate-700/70">
+          暂无例句（人教版补充词）
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 单词详情弹层：点击词卡打开。移动端是底部弹层、桌面端居中浮层，
+ * 底部固定「标记为已掌握」，不再跳转整页。
+ */
+export function WordModal({
   word,
   mastered,
   onClose,
@@ -169,91 +320,36 @@ export function WordDetail({
   onClose: () => void
   onToggleMastered: () => void
 }) {
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [onClose])
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-sm animate-fade-in sm:items-center sm:p-4"
-      onClick={onClose}
+    <Sheet
+      open
+      onClose={onClose}
+      footer={
+        <button
+          onClick={onToggleMastered}
+          className={`flex w-full items-center justify-center gap-2 rounded-[18px] py-3.5 text-sm font-semibold transition active:scale-[0.985] ${
+            mastered
+              ? 'bg-brand-600 text-white shadow-float hover:bg-brand-700'
+              : 'bg-slate-900 text-white shadow-float hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100'
+          }`}
+        >
+          <CheckIcon width={18} height={18} />
+          {mastered ? '已掌握 · 点击取消' : '标记为已掌握'}
+        </button>
+      }
     >
-      <div
-        className="flex max-h-[90vh] max-h-[90dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl animate-scale-in dark:bg-slate-800 sm:rounded-3xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-700 sm:px-6">
-          <div className="flex items-center gap-2">
-            {word.grade ? <GradeBadge grade={word.grade} /> : <LevelBadge level={word.level} />}
-          </div>
-          <button onClick={onClose} className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700">
-            <XIcon width={20} height={20} />
-          </button>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="break-words text-2xl font-extrabold text-slate-900 dark:text-white sm:text-3xl">{word.word}</h2>
-              <p className="mt-1 text-slate-400 dark:text-slate-500">{word.ipa}</p>
-            </div>
-            <SpeakerBtn text={word.word} rate={0.85} className="h-12 w-12 bg-brand-50 dark:bg-brand-500/10" />
-          </div>
-
-          <div className="mt-4 rounded-2xl bg-slate-50 p-4 dark:bg-slate-900/40">
-            <div className="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
-              {word.pos && (
-                <span className="rounded-md bg-white px-2 py-0.5 font-mono text-xs shadow-sm dark:bg-slate-800">{word.pos}</span>
-              )}
-              <span className="text-base font-semibold text-slate-800 dark:text-slate-100">{word.meaning}</span>
-            </div>
-          </div>
-
-          <p className="mb-2 mt-5 text-xs font-semibold uppercase tracking-wide text-slate-400">例句</p>
-          {word.examples.length > 0 ? (
-            <ul className="space-y-3">
-              {word.examples.map((ex, i) => (
-                <li key={i} className="rounded-xl border border-slate-100 p-3 dark:border-slate-700">
-                  <div className="flex items-start justify-between gap-2">
-                    <p className="text-slate-800 dark:text-slate-100">{ex.en}</p>
-                    <SpeakerBtn text={ex.en} rate={0.9} />
-                  </div>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{ex.zh}</p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="rounded-xl border border-dashed border-slate-200 py-4 text-center text-sm text-slate-400 dark:border-slate-700">
-              暂无例句（人教版补充词）
-            </p>
-          )}
-        </div>
-
-        <div className="shrink-0 border-t border-slate-100 px-5 py-4 dark:border-slate-700 sm:px-6">
-          <button
-            onClick={onToggleMastered}
-            className={`flex w-full items-center justify-center gap-2 rounded-xl py-3 font-semibold transition ${
-              mastered
-                ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                : 'bg-brand-600 text-white hover:bg-brand-700'
-            }`}
-          >
-            <CheckIcon width={18} height={18} />
-            {mastered ? '已掌握 · 点击取消' : '标记为已掌握'}
-          </button>
-        </div>
-      </div>
-    </div>
+      <WordDetailBody word={word} mastered={mastered} />
+    </Sheet>
   )
 }
 
 export function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800/60">
-      <p className="text-xs text-slate-400">{label}</p>
-      <p className={`mt-1 text-2xl font-extrabold ${accent ? 'text-emerald-500' : 'text-slate-800 dark:text-slate-100'}`}>{value}</p>
+    <div className="surface p-4">
+      <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">{label}</p>
+      <p className={`mt-1 font-display text-3xl font-semibold ${accent ? 'text-brand-700 dark:text-brand-300' : 'text-slate-900 dark:text-slate-100'}`}>
+        {value}
+      </p>
     </div>
   )
 }
@@ -262,14 +358,62 @@ export function FilterChip({ active, onClick, children }: { active: boolean; onC
   return (
     <button
       onClick={onClick}
-      className={`shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition ${
+      aria-pressed={active}
+      className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-[12px] font-semibold transition active:scale-[0.98] ${
         active
-          ? 'bg-brand-600 text-white shadow-sm'
-          : 'bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+          ? 'border-slate-900 bg-slate-900 text-white shadow-sm dark:border-white dark:bg-white dark:text-slate-900'
+          : 'border-slate-200/70 bg-white/70 text-slate-600 hover:border-slate-300 hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-300 dark:hover:bg-slate-800'
       }`}
     >
       {children}
     </button>
+  )
+}
+
+/* 词性筛选：多选（可组合）。放在筛选弹层里展示全部词性。 */
+function PosFilterRow({
+  value,
+  onChange,
+  counts,
+}: {
+  value: Set<PosId>
+  onChange: (v: Set<PosId>) => void
+  counts?: Record<PosId, number>
+}) {
+  const toggle = (id: PosId) => {
+    const next = new Set(value)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onChange(next)
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <FilterChip active={value.size === 0} onClick={() => onChange(new Set())}>
+        全部词性
+      </FilterChip>
+      {POS_GROUPS.map((p) => {
+        const active = value.has(p.id)
+        const n = counts?.[p.id]
+        return (
+          <FilterChip key={p.id} active={active} onClick={() => toggle(p.id)}>
+            {posLabel(p.id)}
+            {counts && (
+              <span className={`ml-1 text-[11px] ${active ? 'text-white/60 dark:text-slate-500' : 'text-slate-400'}`}>{n}</span>
+            )}
+          </FilterChip>
+        )
+      })}
+    </div>
+  )
+}
+
+function FilterGroup({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <section>
+      <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{label}</p>
+      <div className="flex flex-wrap gap-2">{children}</div>
+    </section>
   )
 }
 
@@ -288,8 +432,13 @@ export function FilterBar({
   setShowUnmastered,
   showMastered,
   setShowMastered,
+  displayMode,
+  setDisplayMode,
   hideLevel = false,
   hideCategory = false,
+  posFilter,
+  setPosFilter,
+  posCounts,
 }: {
   levelFilter: Level | 'all'
   setLevelFilter: (v: Level | 'all') => void
@@ -304,128 +453,260 @@ export function FilterBar({
   setShowUnmastered?: (v: boolean) => void
   showMastered?: boolean
   setShowMastered?: (v: boolean) => void
+  /** 传了才显示「中英 / 英文 / 中文」切换（列表卡片显示语言） */
+  displayMode?: DisplayMode
+  setDisplayMode?: (m: DisplayMode) => void
   hideLevel?: boolean
   hideCategory?: boolean
+  /** 传了才显示词性筛选（多选，可组合） */
+  posFilter?: Set<PosId>
+  setPosFilter?: (v: Set<PosId>) => void
+  /** 各词性在当前其他筛选条件下的词数 */
+  posCounts?: Record<PosId, number>
 }) {
+  const [open, setOpen] = useState(false)
+
+  const reset = () => {
+    setLevelFilter('all')
+    setCatFilter('all')
+    setCommonOnly(false)
+    setShowUnmastered?.(true)
+    setShowMastered?.(false)
+    setPosFilter?.(new Set())
+  }
+
   return (
-    <div className="mb-4 flex flex-col gap-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          {!hideLevel && (
-            <>
-              <FilterChip active={levelFilter === 'all'} onClick={() => setLevelFilter('all')}>
-                全部
-              </FilterChip>
-              {['Pre-A1', 'A1', 'A2', 'B1', 'B2'].map((l) => (
-                <FilterChip key={l} active={levelFilter === l} onClick={() => setLevelFilter(l as Level)}>
-                  {l}
-                </FilterChip>
-              ))}
-              {showMasterChips && <span className="mx-1 h-4 w-px bg-slate-200 dark:bg-slate-700" />}
-            </>
-          )}
-          {showMasterChips && (
-            <>
-              <FilterChip active={!!showUnmastered} onClick={() => setShowUnmastered?.(!(showUnmastered ?? false))}>
-                未掌握
-              </FilterChip>
-              <FilterChip active={!!showMastered} onClick={() => setShowMastered?.(!(showMastered ?? false))}>
-                已掌握
-              </FilterChip>
-            </>
-          )}
-        </div>
-        <div className="relative">
-          <SearchIcon width={16} height={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="搜索单词 / 释义 / 音标"
-            className="w-full rounded-xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-brand-400 focus:ring-2 focus:ring-brand-100 dark:border-slate-700 dark:bg-slate-800 dark:focus:ring-brand-500/20 sm:w-64"
-          />
+    <div
+      className="fixed inset-x-0 z-20 border-b border-slate-900/[0.06] bg-[#f6f3ea]/90 backdrop-blur-xl dark:border-white/10 dark:bg-[#0e100c]/90"
+      style={{ top: 'calc(env(safe-area-inset-top) + 56px)' }}
+    >
+      <div className="mx-auto max-w-5xl px-4 py-2">
+        <div className="flex items-center gap-2">
+          <div className="relative min-w-0 flex-1">
+            <SearchIcon
+              width={17}
+              height={17}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索单词 / 释义 / 音标"
+              aria-label="搜索单词"
+              className="field h-11 pl-11 pr-10 !py-0 text-[16px] sm:text-[13px]"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                aria-label="清除搜索"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-slate-400 transition hover:bg-slate-900/5 hover:text-slate-700 dark:hover:bg-white/10"
+              >
+                <XIcon width={15} height={15} />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={() => setOpen(true)}
+            className="flex h-11 shrink-0 items-center gap-2 rounded-[18px] border border-slate-200/70 bg-white/70 px-3.5 text-[13px] font-semibold text-slate-700 transition hover:bg-white active:scale-[0.99] dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-200 dark:hover:bg-slate-800"
+          >
+            <SlidersIcon width={17} height={17} />
+            <span className="hidden sm:inline">筛选</span>
+          </button>
         </div>
       </div>
 
-      {!hideCategory && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="shrink-0 text-xs font-medium text-slate-400">场景</span>
-          <FilterChip active={catFilter === 'all'} onClick={() => setCatFilter('all')}>
-            全部场景
-          </FilterChip>
-          {CATEGORIES.map((c) => (
-            <FilterChip key={c.id} active={catFilter === c.id} onClick={() => setCatFilter(c.id)}>
-              {c.label}
+      <Sheet
+        open={open}
+        onClose={() => setOpen(false)}
+        title="筛选单词"
+        subtitle="组合等级、场景、掌握状态与词性，快速缩小范围"
+        footer={
+          <div className="flex gap-2">
+            <button
+              onClick={reset}
+              className="flex-1 rounded-[18px] border border-slate-200/70 bg-white/70 py-3 text-sm font-semibold text-slate-600 transition hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              重置
+            </button>
+            <button
+              onClick={() => setOpen(false)}
+              className="flex-[1.4] rounded-[18px] bg-slate-900 py-3 text-sm font-semibold text-white shadow-float transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
+            >
+              查看结果
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-5 pb-1">
+          {!hideLevel && (
+            <FilterGroup label="CEFR 等级">
+              <FilterChip active={levelFilter === 'all'} onClick={() => setLevelFilter('all')}>
+                全部
+              </FilterChip>
+              {(['Pre-A1', 'A1', 'A2', 'B1', 'B2'] as Level[]).map((l) => (
+                <FilterChip key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>
+                  {l}
+                </FilterChip>
+              ))}
+            </FilterGroup>
+          )}
+
+          {!hideCategory && (
+            <FilterGroup label="场景">
+              <FilterChip active={catFilter === 'all'} onClick={() => setCatFilter('all')}>
+                全部场景
+              </FilterChip>
+              {CATEGORIES.map((c) => (
+                <FilterChip key={c.id} active={catFilter === c.id} onClick={() => setCatFilter(c.id)}>
+                  {c.label}
+                </FilterChip>
+              ))}
+            </FilterGroup>
+          )}
+
+          <FilterGroup label="掌握状态">
+            <FilterChip active={commonOnly} onClick={() => setCommonOnly(!commonOnly)}>
+              ★ 只看常用
             </FilterChip>
-          ))}
-          <span className="mx-1 hidden h-4 w-px bg-slate-200 dark:bg-slate-700 sm:block" />
-          <FilterChip active={commonOnly} onClick={() => setCommonOnly(!commonOnly)}>
-            ★ 只看常用
-          </FilterChip>
+            {showMasterChips && (
+              <>
+                <FilterChip active={!!showUnmastered} onClick={() => setShowUnmastered?.(!(showUnmastered ?? false))}>
+                  未掌握
+                </FilterChip>
+                <FilterChip active={!!showMastered} onClick={() => setShowMastered?.(!(showMastered ?? false))}>
+                  已掌握
+                </FilterChip>
+              </>
+            )}
+          </FilterGroup>
+
+          {displayMode && setDisplayMode && (
+            <FilterGroup label="卡片显示">
+              <DisplayModeToggle value={displayMode} onChange={setDisplayMode} />
+            </FilterGroup>
+          )}
+
+          {posFilter && setPosFilter && (
+            <FilterGroup label="词性">
+              <PosFilterRow value={posFilter} onChange={setPosFilter} counts={posCounts} />
+            </FilterGroup>
+          )}
         </div>
-      )}
-      {hideCategory && (
-        <div className="flex flex-wrap items-center gap-2">
-          <FilterChip active={commonOnly} onClick={() => setCommonOnly(!commonOnly)}>
-            ★ 只看常用
-          </FilterChip>
-        </div>
-      )}
+      </Sheet>
     </div>
   )
 }
 
-/* Grouped word grid with empty state, reused by Home and Unmastered list. */
+/* Grouped word grid with empty state, reused by all browse pages. */
+const GRID_BATCH = 60
+
 export function WordGrid({
   words,
   masteredSet,
+  mode = 'both',
   onOpen,
   onToggleMastered,
 }: {
   words: Word[]
   masteredSet: Set<string>
+  mode?: DisplayMode
   onOpen: (w: Word) => void
   onToggleMastered: (w: Word) => void
 }) {
   const groups = useMemo(() => groupByCategory(words), [words])
   const themeCount = useMemo(() => groups.reduce((s, g) => s + g.themes.length, 0), [groups])
 
+  /** 渐进渲染：一次只挂载一批卡片，滚动到底自动追加。上千张卡片同时布局是切页卡顿的主因。 */
+  const [limit, setLimit] = useState(GRID_BATCH)
+  useEffect(() => setLimit(GRID_BATCH), [words])
+  const shown = Math.min(limit, words.length)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+
+  const loadMore = () => setLimit((l) => l + GRID_BATCH)
+
+  useEffect(() => {
+    const el = sentinelRef.current
+    if (!el || shown >= words.length || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setLimit((l) => l + GRID_BATCH)
+      },
+      { rootMargin: '800px 0px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  }, [shown, words.length])
+
+  // 按分类 / 主题顺序截取前 shown 个词，保持分组结构
+  const sliced = useMemo(() => {
+    let left = shown
+    return groups
+      .map((g) => {
+        const themes: typeof g.themes = []
+        let count = 0
+        for (const t of g.themes) {
+          if (left <= 0) break
+          const items = t.items.slice(0, left)
+          left -= items.length
+          count += items.length
+          if (items.length) themes.push({ ...t, items })
+        }
+        return { ...g, themes, count }
+      })
+      .filter((g) => g.themes.length > 0)
+  }, [groups, shown])
+
   if (words.length === 0) {
     return (
-      <div className="rounded-2xl border border-dashed border-slate-300 py-16 text-center text-slate-400 dark:border-slate-700">
-        没有找到匹配的单词
+      <div className="rounded-[26px] border border-dashed border-slate-300/70 bg-white/35 px-6 py-16 text-center dark:border-slate-700/70 dark:bg-slate-800/20">
+        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-900/5 text-slate-400 dark:bg-white/5 dark:text-slate-500">
+          <SearchIcon width={24} height={24} />
+        </div>
+        <p className="text-sm font-bold text-slate-600 dark:text-slate-300">没有找到匹配的单词</p>
+        <p className="mt-1 text-xs text-slate-400">换个关键词，或调整筛选条件试试</p>
       </div>
     )
   }
 
   return (
     <>
-      <p className="mb-3 text-sm text-slate-400">
-        共 {words.length} 个单词 · {groups.length} 个场景 · {themeCount} 个分组
-      </p>
-      <div className="space-y-8">
-        {groups.map((g) => (
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <p className="eyebrow">Vocabulary</p>
+        <p className="text-[11px] text-slate-400">
+          {shown}/{words.length} 词 · {groups.length} 个场景 · {themeCount} 个分组
+        </p>
+      </div>
+      <div className="space-y-5">
+        {sliced.map((g) => (
           <section key={g.category.id}>
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-3 flex items-center gap-2.5">
               <span className={`h-2.5 w-2.5 rounded-full ${CAT_DOT[g.category.id]}`} />
-              <h2 className="text-base font-bold text-slate-700 dark:text-slate-200">{g.category.label}</h2>
-              <span className="text-xs text-slate-400">{g.category.en}</span>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-slate-800">{g.count}</span>
+              <h2 className="font-display text-[17px] font-semibold tracking-tight text-slate-900 dark:text-slate-100">
+                {g.category.label}
+              </h2>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                {g.category.en}
+              </span>
+              <span className="ml-auto rounded-full border border-slate-200/60 bg-white/60 px-2.5 py-0.5 text-[11px] font-semibold text-slate-500 dark:border-slate-700/50 dark:bg-slate-800/40 dark:text-slate-400">
+                {g.count}
+              </span>
             </div>
-            <div className="space-y-4">
+            <div className="space-y-2.5">
               {g.themes.map((t) => (
                 <div key={t.id}>
                   {t.label && (
-                    <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    <p className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">
                       <span className={`h-1.5 w-1.5 rounded-full ${CAT_DOT[g.category.id]} opacity-60`} />
                       {t.label}
                     </p>
                   )}
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
                     {t.items.map((w) => (
                       <WordCard
                         key={w.word}
                         word={w}
                         mastered={masteredSet.has(w.word)}
+                        mode={mode}
                         onOpen={() => onOpen(w)}
                         onToggleMastered={() => onToggleMastered(w)}
                       />
@@ -437,6 +718,14 @@ export function WordGrid({
           </section>
         ))}
       </div>
+
+      {shown < words.length && (
+        <div ref={sentinelRef} className="mt-8 flex justify-center">
+          <button onClick={loadMore} className="btn-soft">
+            加载更多（{shown}/{words.length}）
+          </button>
+        </div>
+      )}
     </>
   )
 }
