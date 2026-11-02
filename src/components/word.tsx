@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { CATEGORIES, groupByCategory } from '../data'
+import { ALL_WORDS, CATEGORIES, LEVELS, groupByCategory } from '../data'
 import type { CategoryId, Level, Word } from '../data'
+import { GRADE_RUNGS } from '../data/levels'
 import { GRADE_STYLE, GRADES } from '../data/grades'
 import { useSpeech } from '../hooks/useSpeech'
+import { wordKey } from '../lib/cluster'
+import { lookupWord } from '../lib/dict'
+import { textTokens } from '../lib/parse'
 import { POS_GROUPS, posLabel, posShort, type PosId } from '../lib/pos'
 import { DisplayModeToggle, type DisplayMode } from './display'
-import { CheckIcon, SearchIcon, SlidersIcon, SpeakerIcon, XIcon } from './icons'
+import { CheckIcon, ChevronRightIcon, SearchIcon, SlidersIcon, SpeakerIcon, XIcon } from './icons'
 import { Sheet } from './Sheet'
 
 export const LEVEL_STYLE: Record<Level, { badge: string; dot: string }> = {
@@ -236,14 +240,73 @@ export function WordCard({
 }
 
 /* ----------------------------- Detail body（整页展示） ----------------------------- */
-export function WordDetailBody({ word, mastered }: { word: Word; mastered: boolean }) {
+export function WordDetailBody({
+  word,
+  mastered,
+  onOpenWord,
+}: {
+  word: Word
+  mastered: boolean
+  /** 例句中点词回调，打开对应词的详情 */
+  onOpenWord?: (w: Word) => void
+}) {
   const pos = posShort(word)
+
+  /** 词键 → Word 的快速索引：例句点词时查词用 */
+  const wordMap = useMemo(() => {
+    const m = new Map<string, Word>()
+    for (const w of ALL_WORDS) m.set(wordKey(w.word), w)
+    return m
+  }, [])
+
+  /** 从例句里的原文 token 找到对应的完整 Word（处理屈折变体） */
+  const resolveWord = useMemo(() => {
+    return (token: string): Word | null => {
+      const entry = lookupWord(token)
+      if (!entry) return null
+      // entry.key 是 wordKey 格式（小写规范化），用它查 ALL_WORDS 索引拿完整 Word
+      return wordMap.get(entry.key) ?? wordMap.get(wordKey(entry.word)) ?? null
+    }
+  }, [wordMap])
+
+  /** 渲染可点击的英文文本：分词 + 每个英文词可点击查词 */
+  const renderClickableEn = useMemo(() => {
+    return (en: string) => {
+      // textTokens 需要一个变体索引；传空 Map 会走简单分词——任意英文 token 都是 isWord
+      const nodes = textTokens(en, new Map())
+      return nodes.map((n, i) =>
+        n.isWord
+          ? (
+            <button
+              key={i}
+              type="button"
+              onClick={() => {
+                if (!onOpenWord) return
+                const hit = resolveWord(n.text)
+                if (hit) onOpenWord(hit)
+              }}
+              className={`rounded px-0.5 transition ${
+                onOpenWord
+                  ? 'hover:bg-brand-100 hover:text-brand-700 active:bg-brand-500/25 dark:hover:bg-brand-500/20 dark:hover:text-brand-300'
+                  : ''
+              } ${resolveWord(n.text) ? 'text-brand-700 underline decoration-dotted underline-offset-2 dark:text-brand-300' : ''}`}
+              title={resolveWord(n.text) ? '点击查词' : undefined}
+            >
+              {n.text}
+            </button>
+          )
+          : (
+            <span key={i}>{n.text}</span>
+          ),
+      )
+    }
+  }, [onOpenWord, resolveWord])
 
   return (
     <div>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="eyebrow">{word.grade ? 'PEP · 人教教材' : 'CEFR · 分级词库'}</p>
+          <p className="eyebrow">{word.grade ? '中式阶梯' : '西式阶梯'}</p>
           <h2 className="mt-1.5 break-words font-display text-[34px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
             {word.word}
           </h2>
@@ -282,14 +345,16 @@ export function WordDetailBody({ word, mastered }: { word: Word; mastered: boole
       </div>
 
       <p className="mb-2.5 mt-6 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
-        Examples · 例句
+        Examples · 例句{onOpenWord && <span className="ml-2 font-normal tracking-normal text-slate-300">（点词查卡）</span>}
       </p>
       {word.examples.length > 0 ? (
         <ul className="space-y-3">
           {word.examples.map((ex, i) => (
             <li key={i} className="surface px-4 py-3.5">
               <div className="flex items-start justify-between gap-2">
-                <p className="font-display text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">{ex.en}</p>
+                <p className="font-display text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
+                  {onOpenWord ? renderClickableEn(ex.en) : ex.en}
+                </p>
                 <SpeakerBtn text={ex.en} rate={0.9} iconSize={16} className="-mr-1 -mt-1 shrink-0" />
               </div>
               <p className="mt-1 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">{ex.zh}</p>
@@ -298,7 +363,7 @@ export function WordDetailBody({ word, mastered }: { word: Word; mastered: boole
         </ul>
       ) : (
         <p className="rounded-[18px] border border-dashed border-slate-300/80 py-6 text-center text-sm text-slate-400 dark:border-slate-700/70">
-          暂无例句（人教版补充词）
+          暂无例句（中式词源补充）
         </p>
       )}
     </div>
@@ -313,17 +378,24 @@ export function WordModal({
   word,
   mastered,
   onClose,
+  onPop,
   onToggleMastered,
+  onOpenWord,
 }: {
   word: Word
   mastered: boolean
   onClose: () => void
+  /** 卡片栈回退按钮：传了说明栈里至少有两张，可以返回上一个词 */
+  onPop?: () => void
   onToggleMastered: () => void
+  /** 例句中点词打开新的 WordModal；不传则禁用点词交互 */
+  onOpenWord?: (w: Word) => void
 }) {
   return (
     <Sheet
       open
       onClose={onClose}
+      title=""
       footer={
         <button
           onClick={onToggleMastered}
@@ -338,7 +410,17 @@ export function WordModal({
         </button>
       }
     >
-      <WordDetailBody word={word} mastered={mastered} />
+      {/* 卡片栈返回按钮：当是从另一个词的例句点进来时显示 */}
+      {onPop && (
+        <button
+          onClick={onPop}
+          className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-[12px] font-semibold text-brand-700 transition hover:bg-brand-100 active:scale-[0.97] dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/15"
+        >
+          <ChevronRightIcon width={14} height={14} className="rotate-180" />
+          返回上一个词
+        </button>
+      )}
+      <WordDetailBody word={word} mastered={mastered} onOpenWord={onOpenWord} />
     </Sheet>
   )
 }
@@ -419,8 +501,11 @@ function FilterGroup({ label, children }: { label: string; children: ReactNode }
 
 /* Configurable filter bar reused by Home and Unmastered list views. */
 export function FilterBar({
+  route,
   levelFilter,
   setLevelFilter,
+  gradeFilter,
+  setGradeFilter,
   catFilter,
   setCatFilter,
   commonOnly,
@@ -440,8 +525,11 @@ export function FilterBar({
   setPosFilter,
   posCounts,
 }: {
-  levelFilter: Level | 'all'
-  setLevelFilter: (v: Level | 'all') => void
+  route?: 'grade' | 'level'
+  levelFilter?: Level | 'all'
+  setLevelFilter?: (v: Level | 'all') => void
+  gradeFilter?: string | 'all'
+  setGradeFilter?: (v: string | 'all') => void
   catFilter: CategoryId | 'all'
   setCatFilter: (v: CategoryId | 'all') => void
   commonOnly: boolean
@@ -467,7 +555,8 @@ export function FilterBar({
   const [open, setOpen] = useState(false)
 
   const reset = () => {
-    setLevelFilter('all')
+    setLevelFilter?.('all')
+    setGradeFilter?.('all')
     setCatFilter('all')
     setCommonOnly(false)
     setShowUnmastered?.(true)
@@ -538,18 +627,29 @@ export function FilterBar({
         }
       >
         <div className="space-y-5 pb-1">
-          {!hideLevel && (
-            <FilterGroup label="CEFR 等级">
-              <FilterChip active={levelFilter === 'all'} onClick={() => setLevelFilter('all')}>
+          {!hideLevel && (route === 'grade' ? (
+            <FilterGroup label="中式等级">
+              <FilterChip active={gradeFilter === 'all'} onClick={() => setGradeFilter?.('all')}>
                 全部
               </FilterChip>
-              {(['Pre-A1', 'A1', 'A2', 'B1', 'B2'] as Level[]).map((l) => (
-                <FilterChip key={l} active={levelFilter === l} onClick={() => setLevelFilter(l)}>
-                  {l}
+              {GRADE_RUNGS.map((g) => (
+                <FilterChip key={g.id} active={gradeFilter === g.id} onClick={() => setGradeFilter?.(g.id)}>
+                  {g.label}
                 </FilterChip>
               ))}
             </FilterGroup>
-          )}
+          ) : (
+            <FilterGroup label="西式等级">
+              <FilterChip active={levelFilter === 'all'} onClick={() => setLevelFilter?.('all')}>
+                全部
+              </FilterChip>
+              {LEVELS.map((l) => (
+                <FilterChip key={l.id} active={levelFilter === l.id} onClick={() => setLevelFilter?.(l.id)}>
+                  {l.id}
+                </FilterChip>
+              ))}
+            </FilterGroup>
+          ))}
 
           {!hideCategory && (
             <FilterGroup label="场景">

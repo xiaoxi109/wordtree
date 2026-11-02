@@ -8,6 +8,7 @@ import {
   type PoolWord,
   type TopicId,
 } from '../lib/cluster'
+import type { Level } from '../data'
 import { chatJSON, LlmError, llmErrorMessage } from '../lib/llm'
 import {
   buildLessonMessages,
@@ -96,12 +97,24 @@ export function useAiLessons() {
   /**
    * 一次性生成覆盖全部已掌握词的课程集（并编入一部分错词复习词）。
    * 返回新建的课程集；生成在后台继续，可通过 progress 观察。
+   *
+   * @param allowedLevels 激活窗口范围内的 CEFR 等级；不传则不做等级过滤
+   *                      （向后兼容，且用户可能是「全部」状态）
    */
   const generate = useCallback(
-    async (masteredSet: Set<string>, cfg: LlmConfig, condition: LessonCondition): Promise<AiLessonSet> => {
+    async (
+      masteredSet: Set<string>,
+      cfg: LlmConfig,
+      condition: LessonCondition,
+      allowedLevels?: Level[],
+    ): Promise<AiLessonSet> => {
       if (!isConfigReady(cfg)) throw new Error('请先在「设置」中配置大模型 API')
-      const pool = buildMasteredPool(masteredSet)
-      if (pool.length === 0) throw new Error('还没有已掌握的单词：先去「CEFR / 人教」页标记掌握，再来生成')
+      const rawPool = buildMasteredPool(masteredSet)
+      // 词表围栏：按激活窗口过滤池里的词，确保 AI 文章难度贴合当前等级
+      const pool = allowedLevels && allowedLevels.length > 0
+        ? rawPool.filter((w) => !w.level || allowedLevels.includes(w.level))
+        : rawPool
+      if (pool.length === 0) throw new Error('还没有已掌握的单词：先去词库标记掌握，再来生成')
 
       // 错词队列：已重新掌握的词不再作为复习词
       const masteredKeys = new Set(pool.map((w) => w.key))

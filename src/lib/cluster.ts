@@ -2,7 +2,7 @@ import { ALL_WORDS } from '../data'
 import { CATEGORIES } from '../data/generated/categories'
 import { WORD_THEME } from '../data/themes'
 import { wordsByGrade } from '../data/grades'
-import type { CategoryId } from '../data/types'
+import type { CategoryId, Level } from '../data/types'
 
 /** 与 data/grades.ts 的 norm 保持一致，用于跨来源去重与标签匹配。 */
 export function wordKey(s: string): string {
@@ -22,6 +22,8 @@ export interface PoolWord {
   theme: string | null
   /** 复习词（来自错词队列）：本文要求重复出现，便于强化记忆 */
   isReview?: boolean
+  /** CEFR 等级，用于激活窗口过滤 */
+  level?: Level
 }
 
 export type TopicId = 'random' | 'campus' | 'travel' | 'food' | 'tech' | 'work' | 'daily' | 'story'
@@ -70,6 +72,7 @@ export function buildMasteredPool(masteredSet: Set<string>): PoolWord[] {
     ipa: string,
     meaning: string,
     category: CategoryId | undefined,
+    level?: Level,
   ) => {
     if (!masteredSet.has(word) || !meaning) return
     const key = wordKey(word)
@@ -81,14 +84,15 @@ export function buildMasteredPool(masteredSet: Set<string>): PoolWord[] {
       meaning,
       category: category ?? 'thinking',
       theme: WORD_THEME[word] ?? null,
+      level,
     })
   }
-  for (const w of ALL_WORDS) add(w.word, w.ipa, w.meaning, w.category)
+  for (const w of ALL_WORDS) add(w.word, w.ipa, w.meaning, w.category, w.level)
 
   // 人教专有词（不在 CEFR 主库中）补进词池；按首次出现年级去重逻辑复用 wordsByGrade()。
   const grades = gradeCache()
   for (const list of Object.values(grades)) {
-    for (const w of list) if (w.pepOnly) add(w.word, w.ipa, w.meaning, w.category)
+    for (const w of list) if (w.pepOnly) add(w.word, w.ipa, w.meaning, w.category, w.level)
   }
   return Array.from(out.values())
 }

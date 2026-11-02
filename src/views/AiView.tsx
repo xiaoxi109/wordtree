@@ -11,6 +11,7 @@ import {
 import { useAiLessons } from '../hooks/useAiLessons'
 import { deleteSet, listSets, type AiLessonSet } from '../db'
 import { getReviewWords } from '../lib/review'
+import type { Level } from '../data'
 import LessonReader from './LessonReader'
 import { Sheet, ActionSheet } from '../components/Sheet'
 import {
@@ -39,6 +40,7 @@ export default function AiView({
   readerSetId,
   onOpenReader,
   onBack,
+  activeLevels,
 }: {
   masteredSet: Set<string>
   onApplyMark: (word: string[], mode: 'add' | 'remove') => void
@@ -51,6 +53,8 @@ export default function AiView({
   onOpenReader: (setId: string) => void
   /** 阅读页顶部返回按钮 */
   onBack: () => void
+  /** 激活窗口范围，用于 AI 词表围栏 */
+  activeLevels?: Level[]
 }) {
   const [sets, setSets] = useState<AiLessonSet[] | null>(null)
   const [topic, setTopic] = useState<TopicId>('random')
@@ -123,7 +127,7 @@ export default function AiView({
       return
     }
     try {
-      const set = await generate(masteredSet, cfg, { topic, difficulty, format })
+      const set = await generate(masteredSet, cfg, { topic, difficulty, format }, activeLevels)
       await refreshSets()
       onToast(`开始生成 ${set.total} 篇教程，按场景分组`, 'success')
     } catch (e) {
@@ -212,7 +216,7 @@ export default function AiView({
 
         {masteredCount === 0 && (
           <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
-            去「CEFR / 人教」标记「已掌握」，这里就能开写。
+            去「词库」标记「已掌握」，这里就能开写。
           </p>
         )}
         {!configReady && (

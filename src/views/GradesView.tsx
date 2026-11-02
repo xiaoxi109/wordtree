@@ -36,7 +36,7 @@ export default function GradesView({
       <div className="mb-3 flex items-center justify-between gap-3">
         <div className="min-w-0 flex items-end gap-2">
           <span className="rounded-full bg-slate-900/[0.04] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500 dark:bg-white/[0.06] dark:text-slate-400">
-            PEP · 人教教材
+            中式阶梯
           </span>
           <h2 className="font-display text-[18px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-slate-50">
             跟着课本背单词

@@ -76,7 +76,9 @@ describe('词性筛选匹配', () => {
 
 describe('真实词库覆盖', () => {
   it('CEFR 词库每个词都能映射到具体词性', () => {
+    // 只检查 CEFR 主库词（pepOnly=false），PEP 专有词无词性数据属正常
     const unmapped = ALL_WORDS.filter((w) => {
+      if (w.pepOnly) return false
       const tags = posTags(w)
       return tags.length === 1 && tags[0] === 'other'
     })

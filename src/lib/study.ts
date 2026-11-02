@@ -23,6 +23,8 @@ export interface StudyCard {
   level?: Level
   grade?: string
   pepOnly?: boolean
+  /** 常用词（详情卡显示「常用词」标签） */
+  common?: boolean
   stage: StudyStage
   /** 错词本里的累计错误次数 */
   misses?: number
@@ -52,10 +54,13 @@ export interface StudyBuildOptions {
 }
 
 const STORAGE_KEY = 'lexicore-study'
-const MINUTE = 60_000
 const DAY = 86_400_000
-/** 认识后第 1~5 盒的间隔（天）；第 0 盒是不认识，10 分钟后再来。 */
-export const BOX_INTERVALS_DAYS = [0, 1, 3, 7, 15, 30] as const
+/**
+ * 间隔重复序列（设计要求）：1 → 2 → 4 → 8 → 16 → 30 天（封顶）。
+ * again / hard 都重置回第 0 格（1 天后再来）；good 逐级推进。
+ */
+export const BOX_INTERVALS_DAYS = [1, 2, 4, 8, 16, 30] as const
+const MAX_BOX = BOX_INTERVALS_DAYS.length - 1 // 5
 export const SESSION_SIZE = 20
 
 /* ------------------------------ 持久化 ------------------------------ */
@@ -101,24 +106,25 @@ export function getStudyRecords(): Record<string, StudyRecord> {
   return readRecords()
 }
 
-/** 记录一次背词结果，并按 Leitner 盒安排下次复习时间。 */
+/** 记录一次背词结果，并按间隔重复序列安排下次复习时间。 */
 export function applyStudyGrade(key: string, grade: StudyGrade, now = Date.now()): StudyRecord {
   const records = readRecords()
   const prev = records[key]
-  const prevBox = prev?.box ?? 0
+  const prevSeen = prev?.seen ?? 0
   let box = 0
-  let dueAt = now + 10 * MINUTE
+  let dueAt = now + BOX_INTERVALS_DAYS[0] * DAY // 默认 1 天后再来
   let lapses = prev?.lapses ?? 0
 
   if (grade === 'good') {
-    box = Math.min(5, prevBox + 1)
+    // 间隔档位 = 之前见过的次数；第一次 good 进 BOX_INTERVALS_DAYS[0]（1 天）
+    box = Math.min(MAX_BOX, prevSeen)
     dueAt = now + BOX_INTERVALS_DAYS[box] * DAY
   } else if (grade === 'hard') {
-    box = 1
-    dueAt = now + DAY
+    box = 0
+    dueAt = now + BOX_INTERVALS_DAYS[0] * DAY
   } else {
     box = 0
-    dueAt = now + 10 * MINUTE
+    dueAt = now + BOX_INTERVALS_DAYS[0] * DAY
     lapses += 1
   }
 
@@ -138,7 +144,7 @@ export function applyStudyGrade(key: string, grade: StudyGrade, now = Date.now()
 /** 这张卡如果点「认识」，下次隔多少天复习（用于按钮提示）。 */
 export function goodIntervalDays(key: string): number {
   const record = readRecords()[key]
-  const nextBox = Math.min(5, (record?.box ?? 0) + 1)
+  const nextBox = Math.min(MAX_BOX, record?.seen ?? 0) // 下次 good 的 box = 当前 seen 次数
   return BOX_INTERVALS_DAYS[nextBox]
 }
 
@@ -213,6 +219,7 @@ function toCard(word: Word, key: string, stage: StudyStage, misses?: number): St
     level: word.level,
     grade: word.grade,
     pepOnly: word.pepOnly,
+    common: word.common,
     stage,
     misses,
   }

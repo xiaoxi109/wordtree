@@ -6,33 +6,33 @@ import { runBack } from './lib/back'
 import { LEVELS } from './data'
 import type { Level, Word } from './data'
 import { GRADES, type GradeId } from './data/grades'
+import {
+  DEFAULT_GRADE,
+  DEFAULT_LEVEL,
+  activeLevels,
+  type Route,
+  type GradeRung,
+  type LevelRung,
+} from './data/levels'
 import { useSpeech } from './hooks/useSpeech'
-import HomeView from './views/HomeView'
-import GradesView from './views/GradesView'
+import HomeDashboard from './views/HomeDashboard'
 import BrowseView from './views/BrowseView'
 import GradeView from './views/GradeView'
 import SettingsView, { LlmSettingsView } from './views/SettingsView'
 import StudyView from './views/StudyView'
 import AiView from './views/AiView'
 import { WordModal } from './components/word'
-import {
-  ArrowLeftIcon,
-  BookOpenIcon,
-  CheckIcon,
-  HomeIcon,
-  ListIcon,
-  SparklesIcon,
-  UserIcon,
-  XIcon,
-} from './components/icons'
+import { AdvancementQuiz } from './components/AdvancementQuiz'
+import { checkAdvancement } from './lib/advancement'
+import { ArrowLeftIcon, HomeIcon, SparklesIcon, UserIcon, CheckIcon, XIcon } from './components/icons'
 
-type View = 'home' | 'grades' | 'learn' | 'ai' | 'me'
+type View = 'home' | 'ai' | 'me'
 type Theme = 'light' | 'dark'
 
 /**
  * 全局页面栈只承载全屏沉浸式二级页：
- * 大模型设置、等级词表、年级词表、搜索、AI 课程阅读。
- * 听单已内联到阅读器（mode: read|listen），无需独立栈。
+ * 大模型设置、等级词表、年级词表、搜索、AI 课程阅读、闯关晋级、
+ * 背词浏览（BrowseView 全场景）、复习（StudyView）。
  * 生成条件 / 课程集操作等轻量交互用底部 Sheet / ActionSheet，不进栈。
  */
 type Page =
@@ -40,7 +40,10 @@ type Page =
   | { kind: 'search' }
   | { kind: 'level'; level: Level }
   | { kind: 'grade'; grade: GradeId }
+  | { kind: 'browse-all' }
+  | { kind: 'study' }
   | { kind: 'ai-reader'; setId: string }
+  | { kind: 'quiz' }
 
 /**
  * AI 课程在 Web 与原生端都开放；Web 端能否请求成功取决于接口是否允许跨域，
@@ -90,6 +93,14 @@ export default function App() {
     if (saved) return saved as Theme
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   })
+  const [route, setRoute] = useState<Route>(() => {
+    return (localStorage.getItem('lexicore-route') as Route) || 'level'
+  })
+  const [currentRung, setCurrentRung] = useState<GradeRung | LevelRung>(() => {
+    const saved = localStorage.getItem('lexicore-rung')
+    if (saved) return saved as GradeRung | LevelRung
+    return route === 'grade' ? DEFAULT_GRADE : DEFAULT_LEVEL
+  })
   const [masteredArr, setMasteredArr] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem('lexicore-mastered') || '[]')
@@ -100,11 +111,57 @@ export default function App() {
   const [toasts, setToasts] = useState<Toast[]>([])
   const [view, setView] = useState<View>('home')
 
+  /** 连续学习天数：每次标记掌握 / 完成复习 → 今天日期 vs yesterday 比对 */
+  const [streak, setStreak] = useState<number>(() => {
+    const saved = localStorage.getItem('lexicore-streak')
+    if (!saved) return 0
+    try {
+      const { count, lastDate } = JSON.parse(saved) as { count: number; lastDate: string }
+      const today = new Date().toISOString().slice(0, 10)
+      const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+      if (lastDate === today) return count
+      if (lastDate === yesterday) return count
+      return 0
+    } catch {
+      return 0
+    }
+  })
+
+  /** 记录一次学习行为 → 更新连续天数 */
+  const recordStudyDay = useCallback(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    setStreak((prev) => {
+      const saved = localStorage.getItem('lexicore-streak')
+      let lastDate = ''
+      let count = 0
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved) as { count: number; lastDate: string }
+          count = parsed.count
+          lastDate = parsed.lastDate
+        } catch {
+          /* ignore */
+        }
+      }
+      if (lastDate === today) return prev // 今天已记过
+      const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
+      const newCount = lastDate === yesterday ? count + 1 : 1
+      localStorage.setItem('lexicore-streak', JSON.stringify({ count: newCount, lastDate: today }))
+      return newCount
+    })
+  }, [])
+
+  // 首次进入首页、闯关成功、完成一轮复习 → 都算"今日学习"
+  useEffect(() => {
+    recordStudyDay()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   /** 已访问过的主页面：首次进入才挂载，之后常驻（保留筛选与滚动位置） */
   const [visited, setVisited] = useState<Set<View>>(() => new Set<View>(['home']))
   const viewRef = useRef(view)
   viewRef.current = view
-  const scrollRef = useRef<Record<View, number>>({ home: 0, grades: 0, learn: 0, ai: 0, me: 0 })
+  const scrollRef = useRef<Record<View, number>>({ home: 0, ai: 0, me: 0 })
   const rootScrollRef = useRef<HTMLDivElement>(null)
 
   const [pages, setPages] = useState<Page[]>([])
@@ -114,8 +171,15 @@ export default function App() {
   const pageScrollRef = useRef<number[]>([])
 
   /** 单词详情走弹层（不跳页）：点哪张卡就弹哪个词，关掉仍停在原列表位置 */
-  const [wordModal, setWordModal] = useState<Word | null>(null)
-  const openWord = useCallback((w: Word) => setWordModal(w), [])
+  const [wordModalStack, setWordModalStack] = useState<Word[]>([])
+  const openWord = useCallback(
+    (w: Word) => setWordModalStack((prev) => [...prev, w]),
+    [],
+  )
+  const popWordModal = useCallback(() => {
+    setWordModalStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : []))
+  }, [])
+  const closeWordModal = useCallback(() => setWordModalStack([]), [])
 
   const pushPage = useCallback((page: Page) => {
     pageScrollRef.current.push(rootScrollRef.current?.scrollTop ?? 0)
@@ -166,8 +230,12 @@ export default function App() {
   }, [preload])
 
   const toggleMastered = useCallback((word: string) => {
-    setMasteredArr((prev) => (prev.includes(word) ? prev.filter((w) => w !== word) : [...prev, word]))
-  }, [])
+    setMasteredArr((prev) => {
+      const isAdd = !prev.includes(word)
+      if (isAdd) recordStudyDay() // 标记掌握 → 今日学习
+      return isAdd ? [...prev, word] : prev.filter((w) => w !== word)
+    })
+  }, [recordStudyDay])
 
   /** 批量增删掌握词（AI 教程点词三态回流 / 导入进度）。 */
   const applyMastered = useCallback((words: string[], mode: 'add' | 'remove') => {
@@ -210,6 +278,32 @@ export default function App() {
     localStorage.setItem('lexicore-mastered', JSON.stringify(masteredArr))
   }, [masteredArr])
 
+  useEffect(() => {
+    localStorage.setItem('lexicore-route', route)
+  }, [route])
+
+  useEffect(() => {
+    localStorage.setItem('lexicore-rung', currentRung)
+  }, [currentRung])
+
+  /**
+   * 激活窗口（软默认筛选 B）：
+   *   - 用户选了路线 + 我的等级后，词表默认只显示当前等级及以下的词
+   *   - 等级作为"软默认筛选"，不切碎场景分组（BrowseView 自己按 category 分组）
+   *   - 用户可以一键放宽到「全部」（BrowseView 的 levelFilter = 'all'）
+   *   - 注：activeLevelsList 过滤掉 C1/C2（词库上限 B2）
+   */
+  const activeLevelsList = useMemo(
+    () => activeLevels(route, currentRung).filter((l) => l !== 'C1' && l !== 'C2') as Level[],
+    [route, currentRung],
+  )
+
+  /** 晋级检测：当前激活窗口内全部掌握 + 有下一级可去 */
+  const advancement = useMemo(
+    () => checkAdvancement(route, currentRung, new Set(masteredArr)),
+    [route, currentRung, masteredArr],
+  )
+
   // 安卓系统返回键：先交给弹层 / 阅读器，再逐层退页面栈，然后回首页，最后退出应用
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return
@@ -232,11 +326,9 @@ export default function App() {
   }, [popPage, switchView])
 
   const navItems: { id: View; label: string; icon: (size: number) => React.ReactNode }[] = [
-    { id: 'home', label: 'CEFR', icon: (s) => <HomeIcon width={s} height={s} /> },
-    { id: 'grades', label: '人教', icon: (s) => <ListIcon width={s} height={s} /> },
-    { id: 'learn', label: '学习', icon: (s) => <BookOpenIcon width={s} height={s} /> },
+    { id: 'home', label: '首页', icon: (s) => <HomeIcon width={s} height={s} /> },
     { id: 'ai', label: 'AI', icon: (s) => <SparklesIcon width={s} height={s} /> },
-    { id: 'me', label: '我', icon: (s) => <UserIcon width={s} height={s} /> },
+    { id: 'me', label: '我的', icon: (s) => <UserIcon width={s} height={s} /> },
   ]
 
   const pageMeta = useMemo(() => {
@@ -246,17 +338,23 @@ export default function App() {
       case 'llm':
         return { title: '大模型设置', sub: 'OpenAI 兼容接口 · Key 不出设备' }
       case 'search':
-        return { title: '搜索单词', sub: '全部 CEFR 分级词库' }
+        return { title: '搜索单词', sub: '全部分级词库' }
       case 'level': {
         const l = LEVELS.find((x) => x.id === page.level)!
-        return { title: `CEFR ${l.label}`, sub: l.desc }
+        return { title: `西式 ${l.label}`, sub: l.desc }
       }
       case 'grade': {
         const g = GRADES.find((x) => x.id === page.grade)!
         return { title: g.label, sub: g.desc }
       }
+      case 'browse-all':
+        return { title: '全部词库', sub: '按场景分组 · 可叠加等级 / 词性筛选' }
+      case 'study':
+        return { title: '复习', sub: '间隔重复队列 · 到期即练' }
       case 'ai-reader':
         return { title: '课程阅读', sub: '点或长按单词查词，读完自动记录' }
+      case 'quiz':
+        return { title: '晋级闯关', sub: '抽检当前级单词 · 通过可晋级' }
     }
   }, [pages])
 
@@ -267,18 +365,42 @@ export default function App() {
       case 'search':
         return (
           <BrowseView
+            route={route}
             masteredSet={masteredSet}
             onOpen={openWord}
             onToggleMastered={(w) => toggleMastered(w.word)}
+            activeLevels={activeLevelsList}
+          />
+        )
+      case 'browse-all':
+        return (
+          <BrowseView
+            route={route}
+            masteredSet={masteredSet}
+            onOpen={openWord}
+            onToggleMastered={(w) => toggleMastered(w.word)}
+            activeLevels={activeLevelsList}
+            defaultFilter="active"
+          />
+        )
+      case 'study':
+        return (
+          <StudyView
+            route={route}
+            masteredSet={masteredSet}
+            onApplyMark={applyMastered}
+            active={false /* 页面栈内不走 tab，主动管理 */}
           />
         )
       case 'level':
         return (
           <BrowseView
+            route={route}
             level={page.level}
             masteredSet={masteredSet}
             onOpen={openWord}
             onToggleMastered={(w) => toggleMastered(w.word)}
+            activeLevels={activeLevelsList}
           />
         )
       case 'grade':
@@ -293,6 +415,24 @@ export default function App() {
       // AI 阅读全屏页由 AiView 内部按 setId 渲染，这里只登记页面层级
       case 'ai-reader':
         return null
+      case 'quiz':
+        return (
+          <AdvancementQuiz
+            route={route}
+            currentRung={currentRung}
+            masteredSet={new Set(masteredArr)}
+            onComplete={(passed, nextRung) => {
+              if (passed && nextRung) {
+                setCurrentRung(nextRung)
+                pushToast(`🎉 晋级到 ${nextRung}`, 'success')
+              } else if (!passed) {
+                pushToast('闯关未通过，继续加油 💪', 'info')
+              }
+              popPage()
+            }}
+            onCancel={popPage}
+          />
+        )
     }
   }
 
@@ -302,8 +442,12 @@ export default function App() {
       className={`h-screen overflow-y-auto bg-transparent text-slate-900 transition-colors dark:text-slate-100 ${theme === 'dark' ? 'dark' : ''}`}
     >
       <main
-        className={`mx-auto max-w-5xl px-4 pb-[calc(env(safe-area-inset-bottom)+78px)] pt-[calc(env(safe-area-inset-top)+16px)] ${
+        className={`mx-auto max-w-5xl px-4 pt-[calc(env(safe-area-inset-top)+16px)] ${
           pageMeta ? 'mt-[56px]' : ''
+        } ${
+          pages[pages.length - 1]?.kind === 'study'
+            ? 'pb-[env(safe-area-inset-bottom)]'
+            : 'pb-[calc(env(safe-area-inset-bottom)+78px)]'
         }`}
       >
         {/* 二级 / 三级页面：顶部返回栏 fixed 吸顶，搜索/筛选 FilterBar 接着吸在下方 */}
@@ -327,33 +471,22 @@ export default function App() {
           </div>
         )}
 
-        {/* 五个主页面首次进入后常驻（hidden 切换）：保留筛选、滚动与 AI 生成进度 */}
+        {/* 三个主页面首次进入后常驻（hidden 切换）：保留筛选、滚动与 AI 生成进度 */}
         <div className={pageMeta && !aiPageOpen ? 'hidden' : ''}>
           <div className={view === 'home' ? '' : 'hidden'} aria-hidden={view !== 'home'}>
             {visited.has('home') && (
-              <HomeView
+              <HomeDashboard
                 masteredSet={masteredSet}
-                onOpenLevel={(level) => pushPage({ kind: 'level', level })}
+                masteredArr={masteredArr}
+                route={route}
+                currentRung={currentRung}
+                activeLevels={activeLevelsList}
+                canAdvance={advancement.canAdvance}
+                onOpenBrowse={() => pushPage({ kind: 'browse-all' })}
+                onOpenStudy={() => pushPage({ kind: 'study' })}
                 onOpenSearch={() => pushPage({ kind: 'search' })}
-              />
-            )}
-          </div>
-
-          <div className={view === 'grades' ? '' : 'hidden'} aria-hidden={view !== 'grades'}>
-            {visited.has('grades') && (
-              <GradesView
-                masteredSet={masteredSet}
-                onOpenGrade={(grade) => pushPage({ kind: 'grade', grade })}
-              />
-            )}
-          </div>
-
-          <div className={view === 'learn' ? '' : 'hidden'} aria-hidden={view !== 'learn'}>
-            {visited.has('learn') && (
-              <StudyView
-                masteredSet={masteredSet}
-                onApplyMark={applyMastered}
-                active={view === 'learn' && !pageMeta}
+                onStartQuiz={() => pushPage({ kind: 'quiz' })}
+                streak={streak}
               />
             )}
           </div>
@@ -368,30 +501,26 @@ export default function App() {
                 readerSetId={aiReaderSetId}
                 onOpenReader={(setId) => pushPage({ kind: 'ai-reader', setId })}
                 onBack={popPage}
+                activeLevels={activeLevelsList}
               />
             )}
           </div>
 
           <div className={view === 'me' ? '' : 'hidden'} aria-hidden={view !== 'me'}>
             {visited.has('me') && (
-              <div>
-                <div className="mb-3 flex items-baseline justify-between gap-2">
-                  <h1 className="font-display text-[18px] font-semibold tracking-tight text-slate-900 dark:text-slate-50">
-                    我的
-                  </h1>
-                  <span className="text-[11px] font-semibold text-slate-400">
-                    已掌握 {masteredArr.length} 词
-                  </span>
-                </div>
-                <SettingsView
-                  theme={theme}
-                  aiEnabled={AI_ENABLED}
-                  onToggleTheme={toggleTheme}
-                  onOpenLlm={() => pushPage({ kind: 'llm' })}
-                  onToast={pushToast}
-                  onImport={importMastered}
-                />
-              </div>
+              <SettingsView
+                theme={theme}
+                aiEnabled={AI_ENABLED}
+                masteredCount={masteredArr.length}
+                onToggleTheme={toggleTheme}
+                onOpenLlm={() => pushPage({ kind: 'llm' })}
+                onToast={pushToast}
+                onImport={importMastered}
+                route={route}
+                setRoute={setRoute}
+                currentRung={currentRung}
+                setCurrentRung={setCurrentRung}
+              />
             )}
           </div>
         </div>
@@ -424,12 +553,14 @@ export default function App() {
         </nav>
       )}
 
-      {wordModal && (
+      {wordModalStack.length > 0 && (
         <WordModal
-          word={wordModal}
-          mastered={masteredSet.has(wordModal.word)}
-          onClose={() => setWordModal(null)}
-          onToggleMastered={() => toggleMastered(wordModal.word)}
+          word={wordModalStack[wordModalStack.length - 1]}
+          mastered={masteredSet.has(wordModalStack[wordModalStack.length - 1].word)}
+          onClose={closeWordModal}
+          onPop={wordModalStack.length > 1 ? popWordModal : undefined}
+          onToggleMastered={() => toggleMastered(wordModalStack[wordModalStack.length - 1].word)}
+          onOpenWord={(w) => openWord(w)}
         />
       )}
 

@@ -1,5 +1,18 @@
 export type Level = 'Pre-A1' | 'A1' | 'A2' | 'B1' | 'B2'
 
+/** 中式阶梯 rung 顺序（由低到高）—— 从 levels.ts 重导出，保持 Word.grade 类型稳定 */
+export type GradeRung =
+  | 'primary'   // 小学
+  | 'g7'        // 初一
+  | 'g8'        // 初二
+  | 'g9'        // 初三
+  | 'g10'       // 高一
+  | 'g11'       // 高二
+  | 'g12'       // 高三
+  | 'cet4'      // 四级
+  | 'cet6'      // 六级
+  | 'kaoyan'    // 考研
+
 // Scene / thematic category groups used for associative learning (v3 生活场景版).
 export type CategoryId =
   | 'people'      // 人物与关系
@@ -60,8 +73,8 @@ export interface Word {
   /** Marked true for words that exist in the 人教版 (PEP) grade list but are NOT
    *  in the main word library — their 音标/释义 come from PEP data (no examples / category). */
   pepOnly?: boolean
-  /** 人教版年级归属（primary / g7 …），用于人教词表显示「小学 / 初一」等年级徽标。 */
-  grade?: string
+  /** 中式阶梯 rung（primary / g7 / g8 / g9 / g10 / g11 / g12 / cet4 / cet6 / kaoyan），每个词必须同时有 grade 和 level。 */
+  grade?: GradeRung
 }
 
 export interface LevelMeta {

@@ -25,29 +25,29 @@ describe('背词复习计划', () => {
     clearStudyRecords()
   })
 
-  it('认识：盒号递增，间隔按 1/3/7/15/30 天拉长', () => {
+  it('认识：盒号递增，间隔按 1/2/4/8/16/30 天拉长', () => {
     const r1 = applyStudyGrade('alpha', 'good', NOW)
-    expect(r1.box).toBe(1)
+    expect(r1.box).toBe(0)
     expect(r1.dueAt).toBe(NOW + DAY)
     expect(r1.lapses).toBe(0)
 
     const r2 = applyStudyGrade('alpha', 'good', NOW + DAY)
-    expect(r2.box).toBe(2)
-    expect(r2.dueAt).toBe(NOW + DAY + 3 * DAY)
-    expect(goodIntervalDays('alpha')).toBe(7)
+    expect(r2.box).toBe(1)
+    expect(r2.dueAt).toBe(NOW + DAY + 2 * DAY)
+    expect(goodIntervalDays('alpha')).toBe(4)
   })
 
-  it('模糊：回到第 1 盒，明天复习；不认识：第 0 盒，10 分钟后重来', () => {
+  it('模糊与不认识：都重置回第 0 盒（1 天后）', () => {
     applyStudyGrade('beta', 'good', NOW)
     applyStudyGrade('beta', 'good', NOW + DAY)
     const hard = applyStudyGrade('beta', 'hard', NOW + 2 * DAY)
-    expect(hard.box).toBe(1)
-    expect(hard.dueAt).toBe(NOW + 3 * DAY)
+    expect(hard.box).toBe(0)
+    expect(hard.dueAt).toBe(NOW + 2 * DAY + DAY)
 
     const again = applyStudyGrade('beta', 'again', NOW + 3 * DAY)
     expect(again.box).toBe(0)
     expect(again.lapses).toBe(1)
-    expect(again.dueAt).toBe(NOW + 3 * DAY + 10 * 60 * 1000)
+    expect(again.dueAt).toBe(NOW + 3 * DAY + DAY)
   })
 
   it('到期数量与今日已背统计', () => {

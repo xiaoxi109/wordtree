@@ -718,7 +718,7 @@ export default function LessonReader({
             {displayMeaning || '本地词典未收录这个词'}
             {!displayMeaning && (
               <span className="mt-1 block text-xs text-slate-400">
-                可以先用「朗读」听发音，或到「CEFR / 人教」页搜索该词。
+                可以先用「朗读」听发音，或到「词库」搜索该词。
               </span>
             )}
           </p>

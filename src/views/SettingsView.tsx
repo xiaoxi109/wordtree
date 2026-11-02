@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { useSpeech } from '../hooks/useSpeech'
 import { AiSettingsFields } from '../components/AiSettings'
@@ -8,12 +8,23 @@ import {
   DownloadIcon,
   GearIcon,
   MoonIcon,
+  SparklesIcon,
   SpeakerIcon,
   SpinnerIcon,
   SunIcon,
+  TargetIcon,
   TrashIcon,
   UploadIcon,
 } from '../components/icons'
+import {
+  GRADE_RUNGS,
+  LEVEL_RUNGS,
+  gradeToLevel,
+  levelToGrades,
+  type Route,
+  type GradeRung,
+  type LevelRung,
+} from '../data/levels'
 
 type Theme = 'light' | 'dark'
 type Toast = { id: number; msg: string; type: 'success' | 'error' | 'info' }
@@ -136,23 +147,60 @@ function SyncProgressActions({
   )
 }
 
-/** 设置（底部「我」标签的一级页）：外观、发音、学习数据、大模型入口与数据说明。 */
+/** 设置（底部「我」标签的一级页）：学习路线、外观、发音、学习数据、大模型入口。 */
 export default function SettingsView({
   theme,
   aiEnabled,
+  masteredCount: _masteredCount,
   onToggleTheme,
   onOpenLlm,
   onToast,
   onImport,
+  route,
+  setRoute,
+  currentRung,
+  setCurrentRung,
 }: {
   theme: Theme
   aiEnabled: boolean
+  masteredCount?: number
   onToggleTheme: () => void
   onOpenLlm: () => void
   onToast: OnToast
   onImport: (words: string[]) => void
+  route: Route
+  setRoute: (r: Route) => void
+  currentRung: GradeRung | LevelRung
+  setCurrentRung: (r: GradeRung | LevelRung) => void
 }) {
   const [confirmClear, setConfirmClear] = useState(false)
+
+  // 切换路线时，如果当前 rung 在新路线中不兼容，自动对齐：
+  //   - grade→level: 当前 rung 是 GradeRung，映射到对应的 LevelRung
+  //   - level→grade: 当前 rung 是 LevelRung，取对应的最低 GradeRung
+  const switchRoute = (next: Route) => {
+    if (next === route) return
+    if (next === 'level') {
+      // 从 grade 路线切到 level：当前 rung 是 GradeRung
+      setCurrentRung(gradeToLevel(currentRung as GradeRung))
+    } else {
+      // 从 level 路线切到 grade：当前 rung 是 LevelRung
+      const grades = levelToGrades(currentRung as LevelRung)
+      setCurrentRung(grades[0] ?? 'primary')
+    }
+    setRoute(next)
+  }
+
+  const rungLabel = useMemo(() => {
+    if (route === 'grade') {
+      const g = GRADE_RUNGS.find((r) => r.id === currentRung)
+      return g ? `${g.label}（${g.desc}）` : String(currentRung)
+    }
+    const l = LEVEL_RUNGS.find((r) => r.id === currentRung)
+    return l ? `${l.label}（${l.desc}）` : String(currentRung)
+  }, [route, currentRung])
+
+  const [rungPickerOpen, setRungPickerOpen] = useState(false)
 
   // 清除本地学习数据：掌握进度 + 复习计划 + 错词队列，保留外观设置。
   const clearProgress = () => {
@@ -166,6 +214,74 @@ export default function SettingsView({
   return (
     <div className="pb-6">
       <div className="space-y-3">
+        {/* 学习路线 + 我的等级 */}
+        <section className="surface p-3">
+          <div className="flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
+              <TargetIcon width={18} height={18} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-bold text-slate-800 dark:text-slate-100">学习路线</p>
+              <p className="mt-0.5 text-xs text-slate-400">选择中式年级或西式等级，不影响已掌握的词</p>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-1 rounded-[14px] bg-slate-900/[0.04] p-1 dark:bg-white/[0.06]">
+            {(
+              [
+                { id: 'level' as const, label: '西式阶梯', hint: 'Pre-A1 / B2' },
+                { id: 'grade' as const, label: '中式阶梯', hint: '小学 / 初三' },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.id}
+                onClick={() => switchRoute(t.id)}
+                aria-pressed={route === t.id}
+                className={`rounded-[11px] px-2 py-2 text-xs font-bold transition duration-200 ${
+                  route === t.id
+                    ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
+                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                }`}
+              >
+                {t.label}
+                <span className={`ml-1 text-[10px] font-normal ${route === t.id ? 'text-white/70 dark:text-slate-500' : 'text-slate-400'}`}>
+                  {t.hint}
+                </span>
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setRungPickerOpen(true)}
+            className="mt-3 flex w-full items-center justify-between rounded-[14px] border border-slate-200/60 bg-white/70 px-3 py-2.5 text-left transition hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:hover:bg-slate-800"
+          >
+            <div className="min-w-0 flex items-center gap-2">
+              <SparklesIcon width={14} height={14} className="text-brand-500" />
+              <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">我的等级</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-[12px] text-slate-500 dark:text-slate-400">{rungLabel}</span>
+              <ChevronRightIcon width={14} height={14} className="shrink-0 text-slate-300" />
+            </div>
+          </button>
+        </section>
+
+        {/* 等级选择弹层 */}
+        <ActionSheet
+          open={rungPickerOpen}
+          onClose={() => setRungPickerOpen(false)}
+          title="选择当前等级"
+          message="词表默认显示当前等级及以下的词。晋级后可回看更难的词。"
+          actions={(route === 'grade' ? GRADE_RUNGS : LEVEL_RUNGS)
+            .filter((r) => r.id !== 'C2') // C2 预留，暂不在选择中
+            .map((r) => ({
+              label: `${r.label} · ${r.desc}`,
+              description: r.id === currentRung ? '✓ 当前等级' : undefined,
+              onClick: () => {
+                setCurrentRung(r.id as GradeRung | LevelRung)
+                setRungPickerOpen(false)
+              },
+            }))}
+        />
+
         <section className="surface flex items-center justify-between gap-3 px-3 py-2.5">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
