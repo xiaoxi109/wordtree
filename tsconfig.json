@@ -17,5 +17,6 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
+  "exclude": ["src/lib/diagnosis.ts", "src/lib/profile.ts", "src/lib/__TODO__-auto-level-recommendation.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

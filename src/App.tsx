@@ -10,6 +10,7 @@ import {
   DEFAULT_GRADE,
   DEFAULT_LEVEL,
   activeLevels,
+  gradeToLevel,
   type Route,
   type GradeRung,
   type LevelRung,
@@ -42,7 +43,7 @@ type Page =
   | { kind: 'grade'; grade: GradeId }
   | { kind: 'browse-all' }
   | { kind: 'study' }
-  | { kind: 'ai-reader'; setId: string }
+  | { kind: 'ai-reader'; lessonId: string }
   | { kind: 'quiz' }
 
 /**
@@ -201,11 +202,11 @@ export default function App() {
    * AI 课程阅读页走同一条页面栈，由栈顶驱动 AiView 显示阅读器；返回一律 popPage。
    * 轻量交互（生成条件 / 课程集操作 / 听单切换）留在 AiView 内部处理，不入栈。
    */
-  const aiReaderSetId = useMemo<string | null>(() => {
+  const aiReaderLessonId = useMemo<string | null>(() => {
     const top = pages[pages.length - 1]
-    return top?.kind === 'ai-reader' ? top.setId : null
+    return top?.kind === 'ai-reader' ? top.lessonId : null
   }, [pages])
-  const aiPageOpen = aiReaderSetId !== null
+  const aiPageOpen = aiReaderLessonId !== null
 
   const switchView = useCallback((next: View) => {
     if (next === viewRef.current) return
@@ -303,6 +304,21 @@ export default function App() {
     () => checkAdvancement(route, currentRung, new Set(masteredArr)),
     [route, currentRung, masteredArr],
   )
+
+  /** AiView 用的目标 CEFR 等级：晋级目标 → 否则取激活窗口最高等级 */
+  const aiTargetLevel = useMemo<Level | null>(() => {
+    if (!advancement.nextRung) {
+      // 没下一级 → 取当前激活窗口最高等级
+      const highest = activeLevelsList[activeLevelsList.length - 1]
+      return highest ?? null
+    }
+    // grade 路线 → 映射
+    const levelRung = route === 'grade'
+      ? gradeToLevel(advancement.nextRung as any)
+      : advancement.nextRung
+    if (!levelRung || levelRung === 'C1' || levelRung === 'C2') return null
+    return levelRung as Level
+  }, [advancement.nextRung, route, activeLevelsList])
 
   // 安卓系统返回键：先交给弹层 / 阅读器，再逐层退页面栈，然后回首页，最后退出应用
   useEffect(() => {
@@ -498,10 +514,11 @@ export default function App() {
                 onApplyMark={applyMastered}
                 onToast={pushToast}
                 active={view === 'ai'}
-                readerSetId={aiReaderSetId}
-                onOpenReader={(setId) => pushPage({ kind: 'ai-reader', setId })}
+                readerLessonId={aiReaderLessonId}
+                onOpenReader={(lessonId) => pushPage({ kind: 'ai-reader', lessonId })}
                 onBack={popPage}
                 activeLevels={activeLevelsList}
+                targetLevel={aiTargetLevel}
               />
             )}
           </div>

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { isConfigReady, loadLlmConfig, saveLlmConfig, type LlmConfig } from '../config/llm'
-import { TOPICS, type TopicId } from '../lib/cluster'
+import { TOPICS } from '../lib/cluster'
 import {
   DIFFICULTIES,
   LESSON_FORMATS,
@@ -9,85 +9,103 @@ import {
   type LessonFormatChoice,
 } from '../lib/prompt'
 import { useAiLessons } from '../hooks/useAiLessons'
-import { deleteSet, listSets, type AiLessonSet } from '../db'
+import { deleteLesson, listLessons, type Lesson } from '../db'
 import { getReviewWords } from '../lib/review'
+import { MODE_LABEL, type LearningMode, type GeneratedPlan } from '../lib/planner'
 import type { Level } from '../data'
 import LessonReader from './LessonReader'
 import { Sheet, ActionSheet } from '../components/Sheet'
 import {
   BookOpenIcon,
-  CheckIcon,
   ChevronRightIcon,
   GearIcon,
   MoreIcon,
   PlayIcon,
-  SpinnerIcon,
   SparklesIcon,
+  SpinnerIcon,
   TrashIcon,
   XIcon,
 } from '../components/icons'
 
 /**
- * AI 定制课程：列表 → 阅读（走全局页面栈）。
- * 列表页上卡片主按钮直达阅读，补齐/删除收进三点 ActionSheet，生成条件收进底部 Sheet。
- * 听单不再从列表直达：阅读器内自带 listen 模式（mode: read|listen），无需独立的全屏听单页。
+ * AI 定制课程（单篇模式 + 因材施教）
+ *
+ * 顶部：
+ *   - 推荐状态栏：系统基于你的画像算出的「模式 · 词数 · 难度」
+ *   - 「生成一篇」按钮（disabled 在未配置 / 未掌握词时）
+ *
+ * 底部：
+ *   - 实时生成进度
+ *   - 单篇课程卡片列表
+ *
+ * 生成条件 Sheet：
+ *   ① 三种模式大按钮（🎯巩固 / ✨日常 / 🚀拉伸）— 选了自动覆盖词数/难度/复习比
+ *   ② 每篇重点词数（上方标「系统推荐 X」）
+ *   ③ 句式难度（上方标「系统推荐 Y」）
+ *   ④ 题材侧重
+ *   ⑤ 课程体裁
  */
 export default function AiView({
   masteredSet,
   onApplyMark,
   onToast,
   active = true,
-  readerSetId,
+  readerLessonId,
   onOpenReader,
   onBack,
   activeLevels,
+  targetLevel,
 }: {
   masteredSet: Set<string>
   onApplyMark: (word: string[], mode: 'add' | 'remove') => void
   onToast: (msg: string, type?: 'success' | 'error' | 'info') => void
-  /** 当前是否停在 AI 标签；切走时暂停朗读 */
   active?: boolean
-  /** 全局页面栈里正在展示阅读的课程集 id（null 则显示列表） */
-  readerSetId: string | null
-  /** 打开某套课程的阅读器（压栈） */
-  onOpenReader: (setId: string) => void
-  /** 阅读页顶部返回按钮 */
+  readerLessonId: string | null
+  onOpenReader: (lessonId: string) => void
   onBack: () => void
-  /** 激活窗口范围，用于 AI 词表围栏 */
   activeLevels?: Level[]
+  targetLevel?: Level | null
 }) {
-  const [sets, setSets] = useState<AiLessonSet[] | null>(null)
-  const [topic, setTopic] = useState<TopicId>('random')
+  const [lessons, setLessons] = useState<Lesson[] | null>(null)
+  const [mode, setMode] = useState<LearningMode>('daily')
+  const [topic, setTopic] = useState<(typeof TOPICS)[number]['id']>('random')
   const [difficulty, setDifficulty] = useState<Difficulty>('adaptive')
   const [format, setFormat] = useState<LessonFormatChoice>('auto')
-  const [cfg, setCfg] = useState<LlmConfig>(loadLlmConfig)
+  const [cfg, setCfg] = useState<LlmConfig>(loadLlmConfig())
   const [reviewCount, setReviewCount] = useState(() => getReviewWords().length)
 
-  /** 轻量交互：底部 Sheet / ActionSheet */
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [moreFor, setMoreFor] = useState<AiLessonSet | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<AiLessonSet | null>(null)
+  const [moreFor, setMoreFor] = useState<Lesson | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Lesson | null>(null)
 
-  const { progress, generate, resume, cancel } = useAiLessons()
+  const { progress, generate, resume, cancel, previewPlan } = useAiLessons()
 
-  const refreshSets = useCallback(async () => {
+  // ============ 预计算推荐计划（每次模式 / 词库变化时重算） ============
+  const recommended: GeneratedPlan = previewPlan(
+    masteredSet,
+    mode,
+    activeLevels,
+    targetLevel ?? null,
+  )
+  // 用户是否 override 了默认词数/难度（override 后显示为 override 值）
+  const userOverrode = difficulty !== 'adaptive' && difficulty !== recommended.difficulty
+
+  const refreshLessons = useCallback(async () => {
     try {
-      setSets(await listSets())
+      setLessons(await listLessons())
     } catch {
       onToast('读取课程列表失败', 'error')
     }
   }, [onToast])
 
-  useEffect(() => {
-    void refreshSets()
-  }, [refreshSets])
+  useEffect(() => { void refreshLessons() }, [refreshLessons])
 
-  // 阅读完成回到列表时刷新已读数与生成进度
+  // 从阅读器返回列表时刷新
   useEffect(() => {
-    if (readerSetId !== null) return
+    if (readerLessonId !== null) return
     setReviewCount(getReviewWords().length)
-    void refreshSets()
-  }, [readerSetId, refreshSets])
+    void refreshLessons()
+  }, [readerLessonId, refreshLessons])
 
   // 切回 AI 标签时重新读取配置
   useEffect(() => {
@@ -97,7 +115,7 @@ export default function AiView({
     }
   }, [active])
 
-  // 生成结束 → 刷新课程列表；错误提示一次
+  // 生成结束 / 错误提示
   const shownError = useRef<string | null>(null)
   const prevStatus = useRef(progress.status)
   useEffect(() => {
@@ -106,19 +124,21 @@ export default function AiView({
       onToast(progress.error, 'error')
     }
     if (prevStatus.current === 'generating' && progress.status === 'idle') {
-      void refreshSets()
+      void refreshLessons()
     }
     prevStatus.current = progress.status
-  }, [progress.error, progress.status, onToast, refreshSets])
+  }, [progress.error, progress.status, onToast, refreshLessons])
 
   const masteredCount = masteredSet.size
-  const estimatedLessons = useMemo(() => {
-    if (masteredCount === 0) return 0
-    return Math.max(1, Math.ceil(masteredCount / (cfg.wordsPerLesson + 5)))
-  }, [masteredCount, cfg.wordsPerLesson])
-
   const generating = progress.status === 'generating'
   const configReady = isConfigReady(cfg)
+
+  // 当模式变化时，同步更新词数和难度为推荐值（除非用户手动 override 过）
+  useEffect(() => {
+    // 模式切换 → 自动对齐推荐难度；词数在 Sheet 里手动控制
+    if (!userOverrode) setDifficulty(recommended.difficulty)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode])
 
   const startGenerate = async () => {
     if (generating) return
@@ -127,9 +147,23 @@ export default function AiView({
       return
     }
     try {
-      const set = await generate(masteredSet, cfg, { topic, difficulty, format }, activeLevels)
-      await refreshSets()
-      onToast(`开始生成 ${set.total} 篇教程，按场景分组`, 'success')
+      // 传给 generate 的 overrides：如果用户没 override，传 undefined 让 plan 里的值生效
+      const overrides: { wordsPerLesson?: number; difficulty?: Difficulty } = {}
+      // 词数只有在用户手动改过的时候才 override
+      if (cfg.wordsPerLesson !== recommended.wordsPerLesson) overrides.wordsPerLesson = cfg.wordsPerLesson
+      if (difficulty !== 'adaptive' && difficulty !== recommended.difficulty) overrides.difficulty = difficulty
+
+      const lesson = await generate(
+        masteredSet,
+        cfg,
+        { topic, difficulty: difficulty === 'adaptive' ? recommended.difficulty : difficulty, format },
+        mode,
+        overrides.wordsPerLesson !== undefined || overrides.difficulty !== undefined ? overrides : undefined,
+        activeLevels,
+        targetLevel ?? null,
+      )
+      setLessons((prev) => (prev ? [lesson, ...prev] : [lesson]))
+      onToast('开始写作中…', 'success')
     } catch (e) {
       onToast(e instanceof Error ? e.message : '生成失败', 'error')
     }
@@ -143,28 +177,20 @@ export default function AiView({
     [onApplyMark],
   )
 
-  const handleRetrySingle = useCallback(
-    (lessonId: string) => {
-      if (!readerSetId) return
-      resume(readerSetId, cfg, [lessonId])
-    },
-    [readerSetId, resume, cfg],
-  )
-
   const updateWordsPerLesson = (n: number) => {
     const next = { ...cfg, wordsPerLesson: n }
     setCfg(next)
     saveLlmConfig(next)
   }
 
-  /* ------------------------------- 阅读页 ------------------------------- */
-  if (readerSetId) {
+  /* ------------------------------ 阅读器 ------------------------------ */
+  if (readerLessonId) {
     return (
       <LessonReader
-        setId={readerSetId}
+        lessonId={readerLessonId}
         onBack={onBack}
         onApplyMark={handleMark}
-        onRetrySingle={handleRetrySingle}
+        onRetrySingle={(id) => resume(id, cfg).then(() => void refreshLessons())}
         busy={generating}
         active={active}
         onToast={onToast}
@@ -172,30 +198,50 @@ export default function AiView({
     )
   }
 
-  /* ------------------------------- 列表页 ------------------------------- */
+  /* ------------------------------ 列表页 ------------------------------ */
+
+  const modeMeta = MODE_LABEL[mode]
   const topicLabel = TOPICS.find((t) => t.id === topic)?.label ?? '随机'
   const difficultyLabel = DIFFICULTIES.find((d) => d.id === difficulty)?.label ?? '自适应'
   const formatLabel = format === 'auto' ? '自动混搭' : formatMeta(format).label
 
   return (
     <div className="pb-2">
-      {/* 顶部标题（砍成紧凑两行） */}
       <div className="mb-3 flex items-end gap-2">
         <h2 className="font-display text-[18px] font-semibold tracking-tight text-slate-900 dark:text-slate-50">
           AI 定制课程
         </h2>
-        <span className="truncate text-[11px] text-slate-400">用你会的词，写能读能听的课程</span>
+        <span className="truncate text-[11px] text-slate-400">一次一篇 · 因材施教</span>
       </div>
 
-      {/* 主操作：一行摘要 + 生成按钮，条件收进一条细行 */}
+      {/* ① 推荐状态栏（顶部，始终可见） */}
+      <section className="mb-3 rounded-[18px] border border-brand-200/60 bg-gradient-to-br from-brand-50 via-white to-white p-3.5 dark:border-brand-500/25 dark:from-brand-500/10 dark:via-slate-800/40 dark:to-slate-800/40">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+            mode === 'review' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-200'
+            : mode === 'stretch' ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200'
+            : 'bg-brand-100 text-brand-700 dark:bg-brand-500/20 dark:text-brand-200'
+          }`}>
+            {modeMeta.emoji} {modeMeta.label}
+          </span>
+          <span className="text-[13px] font-bold text-slate-800 dark:text-slate-100">
+            {recommended.wordsPerLesson} 词 · {recommended.difficulty === 'adaptive' ? '自适应' : recommended.difficulty}
+          </span>
+        </div>
+        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+          {recommended.reason}
+        </p>
+      </section>
+
+      {/* ② 主按钮 + 条件 Sheet 触发器 */}
       <section className="surface mb-3 p-3">
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-bold text-slate-800 dark:text-slate-100">
-              {masteredCount === 0 ? '先标记已掌握的词' : `生成 ${estimatedLessons} 篇专属课程`}
+              {masteredCount === 0 ? '先标记已掌握的词' : `已掌握 ${masteredCount} 词 · 复习 ${reviewCount}`}
             </p>
             <p className="mt-0.5 truncate text-[11px] text-slate-400">
-              已掌握 {masteredCount} 词{reviewCount > 0 ? ` · 复习词 ${reviewCount}` : ''}
+              {topicLabel} · {formatLabel} · {difficultyLabel}
             </p>
           </div>
           <button
@@ -210,7 +256,7 @@ export default function AiView({
             ) : (
               <GearIcon width={15} height={15} />
             )}
-            {generating ? `${progress.done + progress.failed}/${progress.total}` : '开始生成'}
+            {generating ? progress.sceneLabel || '写作中' : '生成一篇'}
           </button>
         </div>
 
@@ -230,145 +276,125 @@ export default function AiView({
           className="mt-2 flex w-full items-center gap-2 rounded-[10px] bg-slate-900/[0.04] px-3 py-1.5 text-left transition hover:bg-slate-900/[0.07] active:scale-[0.995] dark:bg-white/[0.06] dark:hover:bg-white/10"
         >
           <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-400">
-            {topicLabel} · {formatLabel} · {difficultyLabel} · 每篇 {cfg.wordsPerLesson} 词
+            自定义：{modeMeta.label} · 词数 {cfg.wordsPerLesson} · 难度 {difficultyLabel} · {topicLabel}
           </span>
           <ChevronRightIcon width={14} height={14} className="shrink-0 text-slate-300" />
         </button>
       </section>
 
-      {/* 实时生成进度 */}
+      {/* ③ 实时生成进度 */}
       {generating && (
         <section className="surface mt-4 p-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-2 flex items-center gap-2">
+            <SpinnerIcon width={14} height={14} className="animate-spin text-brand-500" />
             <p className="text-sm font-bold text-slate-700 dark:text-slate-100">
-              正在写作
-              <span className="ml-1.5 text-xs font-medium text-slate-400">
-                {progress.done + progress.failed} / {progress.total}
-              </span>
+              正在写作 · {progress.sceneLabel}
             </p>
             <button
               onClick={cancel}
-              className="rounded-full p-1.5 text-slate-400 transition hover:bg-slate-900/5 dark:hover:bg-white/10"
+              className="ml-auto rounded-full p-1.5 text-slate-400 transition hover:bg-slate-900/5 dark:hover:bg-white/10"
               aria-label="取消生成"
             >
               <XIcon width={16} height={16} />
             </button>
           </div>
           <div className="h-1 w-full overflow-hidden rounded-full bg-slate-900/[0.07] dark:bg-white/10">
-            <div
-              className="h-full rounded-full bg-brand-500 transition-all duration-500"
-              style={{
-                width: `${progress.total ? Math.round(((progress.done + progress.failed) / progress.total) * 100) : 0}%`,
-              }}
-            />
+            <div className="h-full w-2/3 rounded-full bg-brand-500 animate-pulse" />
           </div>
-          <div className="mt-3 max-h-56 space-y-1 overflow-y-auto pr-1">
-            {progress.lessons.map((l) => (
-              <div key={l.id} className="flex items-center gap-2 text-xs">
-                <span className="w-5 shrink-0 text-right tabular-nums text-slate-400">{l.index + 1}</span>
-                {l.status === 'ready' ? (
-                  <CheckIcon width={13} height={13} className="shrink-0 text-emerald-500" />
-                ) : l.status === 'failed' ? (
-                  <XIcon width={13} height={13} className="shrink-0 text-rose-500" />
-                ) : l.running ? (
-                  <SpinnerIcon width={13} height={13} className="shrink-0 animate-spin text-brand-500" />
-                ) : (
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-slate-300 dark:bg-slate-600" />
-                )}
-                <span
-                  className={`min-w-0 flex-1 truncate ${
-                    l.running
-                      ? 'font-semibold text-brand-600 dark:text-brand-300'
-                      : 'text-slate-500 dark:text-slate-400'
-                  }`}
-                >
-                  {l.sceneLabel}
-                </span>
-                <span className="shrink-0 text-[11px] text-slate-400">
-                  {l.status === 'ready' ? '完成' : l.status === 'failed' ? '失败' : l.running ? '写作中' : '排队'}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-slate-400">
-            可离开本页，回来自动接着看；未完成的篇目在课程集里可一键补齐。
-          </p>
+          <p className="mt-2 text-[11px] text-slate-400">可离开本页；写作完成后自动更新到列表。</p>
         </section>
       )}
 
-      {/* 课程集列表 */}
+      {/* ④ 列表 */}
       <div className="mb-2 mt-3 flex items-center justify-between">
-        <p className="eyebrow">我的课程集</p>
-        {sets && sets.length > 0 && <span className="text-[11px] text-slate-400">{sets.length} 个</span>}
+        <p className="eyebrow">我的课程</p>
+        {lessons && lessons.length > 0 && (
+          <span className="text-[11px] text-slate-400">{lessons.length} 篇</span>
+        )}
       </div>
 
-      {!sets ? (
+      {!lessons ? (
         <div className="flex justify-center py-10 text-slate-400">
           <SpinnerIcon width={22} height={22} className="animate-spin" />
         </div>
-      ) : sets.length === 0 ? (
+      ) : lessons.length === 0 ? (
         <div className="rounded-[24px] border border-dashed border-slate-300/70 py-12 text-center text-sm text-slate-400 dark:border-slate-700/70">
-          还没有课程集
-          <p className="mt-1 text-xs">点上面的「开始生成」创建第一套</p>
+          还没有 AI 课程
+          <p className="mt-1 text-xs">点上面的「生成一篇」创建第一篇</p>
         </div>
       ) : (
         <div className="stagger space-y-2">
-          {sets.map((set) => (
-            <SetCard
-              key={set.id}
-              set={set}
-              onOpen={() => onOpenReader(set.id)}
-              onMore={() => setMoreFor(set)}
+          {lessons.map((l) => (
+            <LessonCard
+              key={l.id}
+              lesson={l}
+              onOpen={() => onOpenReader(l.id)}
+              onMore={() => setMoreFor(l)}
             />
           ))}
         </div>
       )}
 
-      {/* ----------------------------- 底部弹层 ----------------------------- */}
+      {/* ----------------------------- 底部 Sheet ----------------------------- */}
 
-      {/* 生成条件 Sheet */}
+      {/* 生成条件 Sheet（含三种模式大按钮） */}
       <Sheet
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        title="生成条件"
-        subtitle="题材、体裁、难度与每篇词数"
+        title="自定义生成条件"
+        subtitle="三种模式覆盖全部偏好，下面可以细调"
       >
         {!configReady && (
           <div className="mb-4 rounded-[18px] border border-amber-200/60 bg-amber-50/70 px-4 py-3 text-[12px] leading-relaxed text-amber-700 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-300">
             大模型还没配置。请到「我」→「大模型设置」填写接口地址与 Key，再回来生成。
           </div>
         )}
-        <div className="space-y-4">
-          <OptionGroup
-            label="课程体裁"
-            value={format}
-            options={[
-              { id: 'auto', label: '✨ 自动混搭' },
-              ...LESSON_FORMATS.map((f) => ({ id: f.id, label: `${f.emoji} ${f.label}` })),
-            ]}
-            onChange={(id) => setFormat(id as LessonFormatChoice)}
-            hint={
-              format === 'auto'
-                ? '按 故事 → 对话 → 日记 → 邮件 → 科普 → 小诗 循环，一套课程里体验多种体裁。'
-                : formatMeta(format).brief
-            }
-          />
-          <OptionGroup
-            label="题材侧重"
-            value={topic}
-            options={TOPICS.map((t) => ({ id: t.id, label: t.label }))}
-            onChange={(id) => setTopic(id as TopicId)}
-            hint="题材只影响排序侧重，所有场景都会生成，确保覆盖全部词。"
-          />
-          <OptionGroup
-            label="句式难度"
-            value={difficulty}
-            options={DIFFICULTIES.map((d) => ({ id: d.id, label: d.label }))}
-            onChange={(id) => setDifficulty(id as Difficulty)}
-            hint={DIFFICULTIES.find((d) => d.id === difficulty)?.hint}
-          />
+
+        <div className="space-y-5">
+          {/* 模式大按钮组 */}
           <div>
-            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">每篇重点词数</p>
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
+              学习模式
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {(['review', 'daily', 'stretch'] as LearningMode[]).map((m) => {
+                const meta = MODE_LABEL[m]
+                const active = mode === m
+                return (
+                  <button
+                    key={m}
+                    onClick={() => setMode(m)}
+                    className={`flex flex-col items-start rounded-[14px] border p-3 text-left transition duration-200 active:scale-[0.98] ${
+                      active
+                        ? 'border-brand-400 bg-brand-50 dark:border-brand-500 dark:bg-brand-500/15'
+                        : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/50'
+                    }`}
+                  >
+                    <span className="text-lg">{meta.emoji}</span>
+                    <span className={`mt-0.5 text-[12px] font-bold ${
+                      active ? 'text-brand-700 dark:text-brand-200' : 'text-slate-700 dark:text-slate-200'
+                    }`}>
+                      {meta.label}
+                    </span>
+                    <span className="mt-0.5 line-clamp-2 text-[10px] leading-snug text-slate-400">
+                      {meta.hint}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* 每篇词数（标注推荐值） */}
+          <div>
+            <div className="mb-1.5 flex items-baseline justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                每篇重点词数
+              </p>
+              <p className="text-[10px] font-semibold text-brand-600 dark:text-brand-300">
+                系统推荐 {recommended.wordsPerLesson} · 当前 {cfg.wordsPerLesson}
+              </p>
+            </div>
             <div className="flex gap-1.5">
               {[12, 16, 20, 24, 28].map((n) => (
                 <button
@@ -381,40 +407,93 @@ export default function AiView({
                   }`}
                 >
                   {n}
+                  {recommended.wordsPerLesson === n && (
+                    <span className="ml-0.5 text-[9px] align-middle text-brand-400">✦</span>
+                  )}
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* 句式难度（标注推荐值） */}
+          <div>
+            <div className="mb-1.5 flex items-baseline justify-between">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                句式难度
+              </p>
+              <p className="text-[10px] font-semibold text-brand-600 dark:text-brand-300">
+                系统推荐 {recommended.difficulty === 'adaptive' ? '自适应' : recommended.difficulty}
+                {difficulty !== 'adaptive' && difficulty !== recommended.difficulty && ' · 已自定义'}
+              </p>
+            </div>
+            <div className="no-scrollbar flex flex-wrap gap-1.5">
+              {DIFFICULTIES.map((d) => {
+                const rec = d.id === recommended.difficulty
+                return (
+                  <button
+                    key={d.id}
+                    onClick={() => setDifficulty(d.id as Difficulty)}
+                    className={`chip-on ${difficulty === d.id ? '' : 'chip-off'} ${rec ? 'ring-1 ring-brand-400/60' : ''}`}
+                  >
+                    {d.label}
+                    {rec && <span className="ml-0.5 text-[9px] text-brand-500">✦</span>}
+                  </button>
+                )
+              })}
+            </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
-              词数越少篇数越多、单篇更短；会按场景自动合并，保证全部已掌握词都进课程。
+              选「自适应」让模型贴合你的实际水平；选具体等级会强制难度向上/向下对齐。
             </p>
           </div>
+
+          <OptionGroup
+            label="题材侧重"
+            value={topic}
+            options={TOPICS.map((t) => ({ id: t.id, label: t.label }))}
+            onChange={(id) => setTopic(id as (typeof TOPICS)[number]['id'])}
+            hint="指定题材时加权挑选该题材下的场景；随机则按你的画像自适应。"
+          />
+
+          <OptionGroup
+            label="课程体裁"
+            value={format}
+            options={[
+              { id: 'auto', label: '✨ 自动混搭' },
+              ...LESSON_FORMATS.map((f) => ({ id: f.id, label: `${f.emoji} ${f.label}` })),
+            ]}
+            onChange={(id) => setFormat(id as LessonFormatChoice)}
+            hint={format === 'auto' ? '每次生成随机挑一种体裁' : formatMeta(format).brief}
+          />
         </div>
       </Sheet>
 
-      {/* 课程集操作 ActionSheet：只保留补齐 + 删除，读/听入口由卡片主按钮承载 */}
+      {/* 卡片操作 ActionSheet */}
       {moreFor && (
         <ActionSheet
           open={!!moreFor}
           onClose={() => setMoreFor(null)}
-          title={moreFor.title}
-          message={`${moreFor.total} 篇 · 已生成 ${moreFor.done}${moreFor.failed ? ` · 失败 ${moreFor.failed}` : ''}`}
+          title={moreFor.title || moreFor.scene_label}
+          message={statusMessage(moreFor)}
           actions={[
-            ...(moreFor.done < moreFor.total
+            ...(moreFor.status === 'failed' || moreFor.status === 'generating'
               ? [
                   {
-                    label: moreFor.done > 0 ? '补齐未完成篇目' : '重新生成',
-                    description: '失败或未生成的篇目会自动重试',
+                    label: moreFor.status === 'failed' ? '重新生成' : '继续等待',
+                    description: moreFor.status === 'failed' ? '用相同的词再调一次大模型' : '回到列表等它完成',
                     icon: <SparklesIcon width={18} height={18} />,
                     onClick: () => {
-                      resume(moreFor.id, cfg)
-                      onToast('继续生成中…', 'info')
+                      if (moreFor.status === 'failed') {
+                        resume(moreFor.id, cfg).then(() => void refreshLessons()).catch(() => {})
+                        onToast('重新生成中…', 'info')
+                      }
+                      setMoreFor(null)
                     },
                   },
                 ]
               : []),
             {
-              label: '删除课程集',
-              description: '正文与标记记录将一并删除',
+              label: '删除',
+              description: '删除后无法恢复',
               icon: <TrashIcon width={18} height={18} />,
               tone: 'danger' as const,
               onClick: () => setDeleteTarget(moreFor),
@@ -423,13 +502,13 @@ export default function AiView({
         />
       )}
 
-      {/* 删除二次确认 Sheet —— 独立于 ActionSheet，用 deleteTarget 保存目标以绕开 onClose 先清 moreFor 的时序 */}
+      {/* 删除二次确认 */}
       {deleteTarget && (
         <Sheet
           open={!!deleteTarget}
           onClose={() => setDeleteTarget(null)}
           title="确认删除"
-          subtitle={`「${deleteTarget.title}」的正文与标记记录会一并删除，无法恢复`}
+          subtitle={`「${deleteTarget.title || deleteTarget.scene_label}」会被永久删除`}
           footer={
             <div className="grid grid-cols-2 gap-2">
               <button onClick={() => setDeleteTarget(null)} className="btn-soft !py-2.5 text-sm">
@@ -437,11 +516,11 @@ export default function AiView({
               </button>
               <button
                 onClick={async () => {
-                  await deleteSet(deleteTarget.id)
-                  await refreshSets()
+                  await deleteLesson(deleteTarget.id)
+                  await refreshLessons()
                   setDeleteTarget(null)
                   setMoreFor(null)
-                  onToast('已删除课程集', 'success')
+                  onToast('已删除', 'success')
                 }}
                 className="rounded-[14px] bg-rose-500 py-2.5 text-sm font-bold text-white transition active:scale-[0.98]"
               >
@@ -451,33 +530,43 @@ export default function AiView({
           }
         >
           <p className="text-[12px] leading-relaxed text-rose-500/80 dark:text-rose-300/70">
-            删除后，这套课程集的所有文章、重点词标记、阅读进度都会清除；已同步到「已掌握词表」的词不会撤回。
+            这篇的正文、重点词标记都一并清除；从中学到的词不会被撤回。
           </p>
         </Sheet>
       )}
-
     </div>
   )
 }
 
+function statusMessage(l: Lesson): string {
+  const s = statusLabel(l.status)
+  if (l.status === 'ready' && l.read_at) return `${s} · 已读`
+  if (l.coverage_total && l.coverage_total > 0) {
+    const covered = l.coverage_hit ?? 0
+    return `${s} · 覆盖 ${covered}/${l.coverage_total}`
+  }
+  return s
+}
+
+function statusLabel(s: Lesson['status']): string {
+  return s === 'ready' ? '已完成' : s === 'failed' ? '生成失败' : '写作中'
+}
+
 /* ------------------------------ 子组件 ------------------------------ */
 
-function SetCard({
-  set,
+function LessonCard({
+  lesson,
   onOpen,
   onMore,
 }: {
-  set: AiLessonSet
+  lesson: Lesson
   onOpen: () => void
   onMore?: () => void
 }) {
-  const readCount = Math.min(set.readCount ?? 0, set.total)
-  const readPct = set.total ? Math.round((readCount / set.total) * 100) : 0
-  const generated = set.done ?? 0
-  const canRead = generated > 0
-  const continueLabel = readCount === 0 ? '开始' : readCount >= set.total ? '再读' : '继续'
-  const fmtChoice = set.condition.format ?? 'auto'
-  const fmt = fmtChoice === 'auto' ? null : formatMeta(fmtChoice)
+  const fmt = formatMeta(lesson.kind)
+  const generating = lesson.status === 'generating'
+  const failed = lesson.status === 'failed'
+  const canRead = lesson.status === 'ready'
 
   return (
     <div className="rounded-[16px] border border-slate-200/60 bg-white/65 p-3 transition duration-200 hover:border-brand-300/50 hover:bg-white hover:shadow-soft dark:border-slate-700/50 dark:bg-slate-800/45 dark:hover:border-brand-500/30">
@@ -488,66 +577,84 @@ function SetCard({
 
         <button onClick={onOpen} className="min-w-0 flex-1 text-left">
           <div className="flex items-center gap-2">
-            <span className="truncate text-[13px] font-bold text-slate-800 dark:text-slate-100">{set.title}</span>
-            <StatusBadge status={set.status} />
+            <span className="truncate text-[13px] font-bold text-slate-800 dark:text-slate-100">
+              {lesson.title || '写作中…'}
+            </span>
+            <LessonStatusBadge status={lesson.status} />
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold">
-            {fmt ? (
-              <span className={`rounded-full px-1.5 py-0.5 ${fmt.badge}`}>
-                {fmt.emoji} {fmt.label}
-              </span>
-            ) : (
-              <span className="rounded-full bg-fuchsia-100 px-1.5 py-0.5 text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300">
-                ✨ 多体裁
+            <span className={`rounded-full px-1.5 py-0.5 ${fmt.badge}`}>
+              {fmt.emoji} {fmt.label}
+            </span>
+            <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-slate-500 dark:bg-white/10 dark:text-slate-300">
+              {lesson.scene_label}
+            </span>
+            {lesson.generation_mode && lesson.generation_mode !== 'daily' && (
+              <span className="rounded-full bg-brand-100 px-1.5 py-0.5 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
+                {MODE_LABEL[lesson.generation_mode].emoji} {MODE_LABEL[lesson.generation_mode].label}
               </span>
             )}
-            <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-slate-500 dark:bg-white/10 dark:text-slate-300">
-              {set.total} 篇
-            </span>
-            <span className="text-[11px] text-slate-400">
-              已读 {readCount}/{set.total} · {set.wordsCount} 词
-              {set.failed > 0 && <span className="text-rose-500"> · 失败 {set.failed}</span>}
-            </span>
+            {lesson.read_at && (
+              <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+                已读
+              </span>
+            )}
+            {lesson.error && (
+              <span className="text-rose-500 line-clamp-1">{lesson.error}</span>
+            )}
           </div>
+          {lesson.coverage_total && lesson.coverage_total > 0 && (
+            <p className="mt-1 text-[11px] text-slate-400">
+              覆盖 {lesson.coverage_hit}/{lesson.coverage_total}
+              {lesson.coverage_real_words
+                ? ` · 用词 ${Math.round(((lesson.coverage_known ?? 0) / lesson.coverage_real_words) * 100)}% 来自你的词库`
+                : ''}
+            </p>
+          )}
         </button>
 
         {onMore && (
           <button
             onClick={onMore}
             className="shrink-0 rounded-full p-1 text-slate-400 transition hover:bg-slate-900/5 hover:text-slate-600 dark:hover:bg-white/10"
-            aria-label="课程集操作"
+            aria-label="操作"
           >
             <MoreIcon width={16} height={16} />
           </button>
         )}
       </div>
 
-      {/* 进度条 + 主按钮同一行，省一整行高度 */}
       <div className="mt-2 flex items-center gap-2">
         <div className="h-1 flex-1 overflow-hidden rounded-full bg-slate-900/[0.07] dark:bg-white/10">
-          <div className="h-full rounded-full bg-brand-500 transition-all duration-500" style={{ width: `${readPct}%` }} />
+          <div
+            className={`h-full rounded-full bg-brand-500 transition-all duration-500 ${generating ? 'animate-pulse w-2/3' : canRead ? 'w-full' : failed ? 'w-1/3 bg-rose-400' : 'w-0'}`}
+          />
         </div>
         <button
           onClick={onOpen}
           disabled={!canRead}
           className="inline-flex shrink-0 items-center gap-1 rounded-[12px] bg-brand-50 px-2.5 py-1 text-[11px] font-bold text-brand-700 transition duration-200 active:scale-[0.99] disabled:opacity-45 dark:bg-brand-500/15 dark:text-brand-300"
         >
-          <PlayIcon width={11} height={11} />
-          {canRead ? continueLabel : '等待'}
+          {generating ? (
+            <><SpinnerIcon width={11} height={11} className="animate-spin" />等待</>
+          ) : failed ? (
+            <><XIcon width={11} height={11} />失败</>
+          ) : (
+            <><PlayIcon width={11} height={11} />{lesson.read_at ? '再读' : '开始'}</>
+          )}
         </button>
       </div>
     </div>
   )
 }
 
-function StatusBadge({ status }: { status: AiLessonSet['status'] }) {
-  const map: Record<AiLessonSet['status'], { label: string; cls: string }> = {
-    generating: { label: '生成中', cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' },
+function LessonStatusBadge({ status }: { status: Lesson['status'] }) {
+  const map: Record<Lesson['status'], { label: string; cls: string }> = {
+    generating: { label: '写作中', cls: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300' },
     ready: { label: '已完成', cls: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' },
-    partial: { label: '未完成', cls: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' },
     failed: { label: '失败', cls: 'bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300' },
   }
-  const s = map[status] ?? map.partial
+  const s = map[status] ?? map.generating
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${s.cls}`}>{s.label}</span>
 }
 
