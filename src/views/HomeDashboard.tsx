@@ -84,7 +84,7 @@ export default function HomeDashboard({
       {/* 顶部搜索行 */}
       <div className="mb-4 flex items-center justify-between">
         <p className="font-display text-[18px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
-          LexiCore
+          词树
         </p>
         <button
           onClick={onOpenSearch}

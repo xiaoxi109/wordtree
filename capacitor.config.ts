@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
   appId: 'com.lexicore.learner',
-  appName: 'LexiCore',
+  appName: '词树',
   webDir: 'dist',
   server: {
     // COOP/COEP 响应头改在 MainActivity.java 中注入，

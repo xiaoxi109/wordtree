@@ -11,6 +11,7 @@ import { posShort } from '../lib/pos'
 import { SpeakerBtn, LevelBadge, GradeBadge } from '../components/word'
 import { DisplayModeToggle, useDisplayMode } from '../components/display'
 import { useSpeech } from '../hooks/useSpeech'
+import { appendWordEvent, directionFromDisplayMode } from '../lib/events'
 import type { Route } from '../data/levels'
 import { CheckIcon, RotateCcwIcon, XIcon, EyeIcon, EyeOffIcon } from '../components/icons'
 
@@ -56,6 +57,7 @@ export default function StudyView({
   const [stats, setStats] = useState<Stats>({ ...EMPTY_STATS })
   const [dueCount, setDueCount] = useState(() => getDueCount())
   const [todayCount, setTodayCount] = useState(() => getTodayStudiedCount())
+  const [shownAt, setShownAt] = useState(() => Date.now())
   const { speak, stop } = useSpeech()
 
   const masteredRef = useRef(masteredSet)
@@ -112,12 +114,22 @@ export default function StudyView({
       applyStudyGrade(card.key, grade === 'good' ? 'good' : 'again')
       onApplyMark([card.word], grade === 'good' ? 'add' : 'remove')
 
+      void appendWordEvent({
+        word_key: card.key,
+        word: card.word,
+        direction: directionFromDisplayMode(displayMode),
+        source: 'study',
+        grade: grade === 'good' ? 'known' : 'unknown',
+        reaction_ms: Date.now() - shownAt,
+      })
+
       setStats((s) => ({ ...s, [grade]: s[grade] + 1 }))
       setIndex((i) => i + 1)
       setRevealed(false)
+      setShownAt(Date.now())
       refreshCounts()
     },
-    [session, index, stop, onApplyMark, refreshCounts],
+    [session, index, stop, onApplyMark, refreshCounts, shownAt, displayMode],
   )
 
   const done = index >= (session?.length ?? 0)

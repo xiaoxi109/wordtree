@@ -367,7 +367,7 @@ export default function SettingsView({
         </section>
 
         <p className="pt-1 text-center text-[11px] text-slate-400">
-          LexiCore v{__APP_VERSION__} · 本地优先 · 不上传学习记录
+          词树 v{__APP_VERSION__} · 用你的词，AI 生文
         </p>
       </div>
 

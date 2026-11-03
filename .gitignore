@@ -40,6 +40,10 @@ scripts/
 # CodeBuddy IDE tool config
 .codebuddy/
 
+# Trae / Workbuddy IDE tool artifacts
+.workbuddy/
+*.trae*/
+
 # Temporary certificate files
 certs_tmp/
 
