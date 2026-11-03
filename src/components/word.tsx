@@ -219,7 +219,7 @@ export function WordCard({
             {word.meaning}
           </span>
         )}
-        {showEn && <SpeakerBtn text={word.word} iconSize={16} className="-mr-1 shrink-0" />}
+        <SpeakerBtn text={word.word} iconSize={16} className="-mr-1 shrink-0" />
       </div>
       {showEn && <span className="relative text-[11px] text-slate-400 dark:text-slate-500">{word.ipa}</span>}
       {showZh && (

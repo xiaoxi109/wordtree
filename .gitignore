@@ -60,7 +60,25 @@ public/tts/onnx/*.map
 # Threaded WASM not needed (numThreads=1)
 public/tts/onnx/ort-wasm-simd-threaded*
 
-# APK build artifacts (local distribution)
+# APK build artifacts
 apk/
 *.apk
-*.aab
+
+# Build outputs
+build/
+.dist/
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Node
+node_modules/
+.env
+
+# WorkBuddy internal state
+.workbuddy/
+
+# Flutter prototype (separate project)
+flutter_app/
