@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ALL_WORDS } from '../data'
 import type { CategoryId, Level, Word } from '../data'
-import type { GradeRung, Route } from '../data/levels'
+import type { GradeRung, LevelRung, Route } from '../data/levels'
+import { rungToFilters } from '../data/levels'
 import { FilterBar, WordGrid } from '../components/word'
 import { useDisplayMode } from '../components/display'
 import { countPos, matchesPos, type PosId } from '../lib/pos'
@@ -10,10 +11,10 @@ import { countPos, matchesPos, type PosId } from '../lib/pos'
  * 词库浏览页（二级页）：按 route 自动切换等级筛选（中式/西式）。
  * 筛选条件、显示语言都在本页内，不再挤在首页。
  *
- * 激活窗口（软默认 B）：
- *   - 传了 activeLevels + defaultFilter='active' 时，初始显示窗口范围内的词
- *   - 用户可随时切换到「全部」，是"软默认"而非强制
- *   - 场景分组永远完整，等级筛选不切碎分组
+ * 默认等级（首页「背词」入口）：
+ *   - 传 currentRung + defaultFilter='active' 时，筛选条默认选中设置里的「我的等级」
+ *   - 用户可随时切换到「全部」或其他等级；手动改过之后不再被设置的变更覆盖
+ *   - 页面栈保活时，若设置里的等级 / 路线变化且用户未改过筛选，自动同步选中项
  */
 export default function BrowseView({
   route = 'level',
@@ -23,28 +24,33 @@ export default function BrowseView({
   onToggleMastered,
   activeLevels,
   defaultFilter = 'all',
+  currentRung,
 }: {
   route?: Route
   level?: Level
   masteredSet: Set<string>
   onOpen: (w: Word) => void
   onToggleMastered: (w: Word) => void
-  /** 激活窗口：初始只显示这些等级及以下；不传则显示全部。是软默认，用户可放宽。 */
+  /** 未传 currentRung 的旧入口兜底：初始取激活窗口的最高等级 */
   activeLevels?: Level[]
-  /** browse-all 模式下设为 'active' 可让初始范围限定在激活窗口 */
+  /** browse-all 模式下设为 'active'，让等级筛选默认跟随设置里的「我的等级」 */
   defaultFilter?: 'all' | 'active'
+  /** 设置里的「我的等级」（中式年级或西式等级） */
+  currentRung?: GradeRung | LevelRung
 }) {
-  // route-aware 初始筛选：根据 route 类型选对应的等级字段
-  const initialLevelFilter: Level | 'all' =
-    level ||
-    (route === 'level' && defaultFilter === 'active' && activeLevels?.length
-      ? activeLevels[activeLevels.length - 1]
-      : 'all')
+  const rungFilters = useMemo(
+    () => (currentRung ? rungToFilters(route, currentRung) : null),
+    [route, currentRung],
+  )
+  // 指定等级的二级页（level 入口）优先用它自己的等级；词库页才跟随设置
+  const rungDefault = !level && defaultFilter === 'active' ? rungFilters : null
 
-  const initialGradeFilter: GradeRung | 'all' =
-    route === 'grade' && defaultFilter === 'active' && activeLevels?.length
-      ? 'all' // grade 路线下初始也显示全部，让软默认自然过滤
+  const fallbackLevelFilter: Level | 'all' =
+    route === 'level' && defaultFilter === 'active' && activeLevels?.length
+      ? activeLevels[activeLevels.length - 1]
       : 'all'
+  const initialLevelFilter: Level | 'all' = level ?? rungDefault?.levelFilter ?? fallbackLevelFilter
+  const initialGradeFilter: GradeRung | 'all' = rungDefault?.gradeFilter ?? 'all'
 
   const [levelFilter, setLevelFilter] = useState<Level | 'all'>(initialLevelFilter)
   const [gradeFilter, setGradeFilter] = useState<GradeRung | 'all'>(initialGradeFilter)
@@ -55,6 +61,17 @@ export default function BrowseView({
   const [search, setSearch] = useState('')
   const [posFilter, setPosFilter] = useState<Set<PosId>>(() => new Set())
   const [displayMode, setDisplayMode] = useDisplayMode()
+
+  // 页面栈保活：设置变更时同步默认等级，前提是用户没手动改过该项筛选
+  const prevRungDefault = useRef(rungDefault)
+  useEffect(() => {
+    const prev = prevRungDefault.current
+    if (prev && rungDefault) {
+      setLevelFilter((v) => (v === prev.levelFilter ? rungDefault.levelFilter : v))
+      setGradeFilter((v) => (v === prev.gradeFilter ? rungDefault.gradeFilter : v))
+    }
+    prevRungDefault.current = rungDefault
+  }, [rungDefault])
 
   const scope = useMemo(
     () => (level ? ALL_WORDS.filter((w) => w.level === level) : ALL_WORDS),

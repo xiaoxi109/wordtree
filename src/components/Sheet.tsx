@@ -6,6 +6,31 @@ import { registerBack } from '../lib/back'
 /** 下拉关闭阈值（px） */
 const DISMISS_THRESHOLD = 96
 
+/*
+ * 背景真正滚动的是 App 根 div（h-screen overflow-y-auto），body 本身已被 CSS
+ * 设为 overflow:hidden，锁 body 没有任何效果。用引用计数支持多个 Sheet 叠加：
+ * 只有第一个打开的加锁、最后一个关闭的解锁，避免互相覆盖恢复值。
+ */
+let scrollLockCount = 0
+let savedScrollOverflow = ''
+
+function lockAppScroll(): void {
+  const el = document.getElementById('app-scroll')
+  if (!el) return
+  if (scrollLockCount === 0) {
+    savedScrollOverflow = el.style.overflow
+    el.style.overflow = 'hidden'
+  }
+  scrollLockCount += 1
+}
+
+function unlockAppScroll(): void {
+  scrollLockCount = Math.max(0, scrollLockCount - 1)
+  if (scrollLockCount > 0) return
+  const el = document.getElementById('app-scroll')
+  if (el) el.style.overflow = savedScrollOverflow
+}
+
 /**
  * 通用底部弹层（移动端现代交互）：背景遮罩点击关闭、ESC / 安卓返回键关闭、
  * 下拉手势关闭、打开时锁定背景滚动；移动端贴底圆角，桌面端居中浮层。
@@ -33,12 +58,16 @@ export function Sheet({
   /** 关闭中：先播下滑动画，结束后再真正关闭 */
   const [closing, setClosing] = useState(false)
   const closingRef = useRef(false)
+  const closeTimerRef = useRef<number | null>(null)
 
   const requestClose = useCallback(() => {
     if (closingRef.current) return
     closingRef.current = true
     setClosing(true)
-    window.setTimeout(() => closeRef.current(), 200)
+    closeTimerRef.current = window.setTimeout(() => {
+      closeTimerRef.current = null
+      closeRef.current()
+    }, 200)
   }, [])
 
   /** 下拉位移（仅头部区域可拖拽，避免与内容滚动冲突） */
@@ -51,17 +80,18 @@ export function Sheet({
     if (!open) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && requestClose()
     window.addEventListener('keydown', onKey)
-
-    // 锁定背景滚动：弹层内的手势不应带着后面的长列表一起动
-    const prevOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    lockAppScroll()
 
     // 安卓系统返回键优先关闭弹层
     const unregister = registerBack(() => requestClose())
 
     return () => {
       window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prevOverflow
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current)
+        closeTimerRef.current = null
+      }
+      unlockAppScroll()
       unregister()
     }
   }, [open, requestClose])
@@ -108,6 +138,7 @@ export function Sheet({
       onClick={requestClose}
       role="dialog"
       aria-modal="true"
+      aria-label={typeof title === 'string' && title ? title : '弹层'}
     >
       <div
         className={`absolute inset-0 bg-slate-950/45 backdrop-blur-[6px] ${

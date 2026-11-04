@@ -3,7 +3,7 @@ import { A1 } from './a1'
 import { A2 } from './a2'
 import { B1 } from './b1'
 import { B2 } from './b2'
-import { EXTENSION } from './extension'
+import { IDIOMS } from './idioms'
 import { CATEGORIES, categoryOf, isCommon } from './generated/categories'
 import { CATEGORY_THEMES, WORD_THEME } from './themes'
 import { PEP_GRADE_WORDS, type PepWord } from './pepGrades'
@@ -27,7 +27,7 @@ export const DATA_DISCLAIMER = {
   dictionary: '单词释义/音标/例句用于个人学习，来源非牛津官方授权',
 } as const
 
-export { PRE_A1, A1, A2, B1, B2, EXTENSION, CATEGORIES }
+export { PRE_A1, A1, A2, B1, B2, CATEGORIES }
 export type { Level, LevelMeta, Word, CategoryId, GradeRung }
 
 /* ----------------------------- 规范化键 ----------------------------- */
@@ -81,11 +81,15 @@ const GRADE_DEFAULT_LEVEL: Record<string, Level> = {
  *   - 每个词同时携带 grade（中式 rung）和 level（西式 rung）
  */
 
-// Step 1: CEFR 主库 + 扩展词，按规范化键去重
+// Step 1: CEFR 主库，按规范化键去重
+//         同时过滤多词短语（含空格/逗号）—— 短语归到 idioms 场景单独管理
+// 注：COCA 扩展包（src/data/extension.ts）暂不并入，先集中完善功能；源文件保留，
+//     日后接入只需恢复 import 并把 ...EXTENSION 加回本数组即可。
 const CEFR_WORDS: Word[] = (() => {
-  const raw: Word[] = [...PRE_A1, ...A1, ...A2, ...B1, ...B2, ...EXTENSION]
+  const raw: Word[] = [...PRE_A1, ...A1, ...A2, ...B1, ...B2]
   const seen = new Set<string>()
   return raw.filter((w) => {
+    if (/\s|,/.test(w.word)) return false               // 过滤 "have to" / "a, an" 等
     const k = norm(w.word)
     if (seen.has(k)) return false
     seen.add(k)
@@ -101,12 +105,16 @@ for (const w of CEFR_WORDS) cefrKeys.add(norm(w.word))
 const cefrMerged: Word[] = CEFR_WORDS.map((w) => {
   const key = norm(w.word)
   const grade = pepWordToGrade.get(key) ?? LEVEL_DEFAULT_GRADE[w.level]
-  return {
+  const word: Word = {
     ...w,
     grade,
     category: categoryOf(w.word),
     common: isCommon(w.word),
   }
+  // 早期主库文件里少数词条带 extended 标记，扩展包移除后该标记已无意义，
+  // 统一剥掉，避免词库 / SQL 里残留 extended=1 的行。
+  delete word.extended
+  return word
 })
 
 // Step 4: PEP 专有词（不在 CEFR 库）补 level + 场景分类
@@ -117,6 +125,7 @@ for (const g of PEP_GRADE_ORDER) {
     const key = norm(pw.en)
     if (cefrKeys.has(key)) continue // CEFR 库已有，跳过
     if (pepWordToGrade.get(key) !== g) continue // 不是首次出现的年级
+    if (/\s|,/.test(pw.en)) continue // 过滤 PEP 教材中的多词短语
     const enrich = PEP_ENRICH[pw.en]
     pepOnlyWords.push({
       word: pw.en,
@@ -141,15 +150,20 @@ const pepOnlyUnique = pepOnlyWords.filter((w) => {
   return true
 })
 
-/**
- * ALL_WORDS — 合并后的统一词库。
- * 每个词同时携带 grade（中式）和 level（西式），跨阶梯共享。
- * de-dup：CEFR 词优先（有完整释义/例句），PEP 专有词作为补充。
- */
-export const ALL_WORDS: Word[] = [...cefrMerged, ...pepOnlyUnique]
+// Step 6: IDIOMS 短语 — 补 grade，直接合并（不会与单词层冲突）
+const idiomsWithGrade: Word[] = IDIOMS.map((w) => ({
+  ...w,
+  grade: w.grade || LEVEL_DEFAULT_GRADE[w.level],
+  category: w.category || 'idioms',
+  common: isCommon(w.word),
+}))
 
-// 注：扩展词已通过 `...EXTENSION` 全部并入，它们按各自的 level 归入对应分级，参与统计与浏览展示。
-// PEP 专有词也已合并，pepOnly=true 可在 UI 上区分显示。
+/**
+ * ALL_WORDS — 当前生效的统一词库（CEFR 主库 + PEP 教材专有词 + 常用短语）。
+ * 每个词同时携带 grade（中式）与 level（西式）；CEFR 词优先，PEP 专有词补充，IDIOMS 独立。
+ * COCA 扩展包暂未并入（见 Step 1 注释），本层即学习 / 浏览 / 复习 / 查词的唯一词库。
+ */
+export const ALL_WORDS: Word[] = [...cefrMerged, ...pepOnlyUnique, ...idiomsWithGrade]
 
 /* ----------------------------- 场景分组 ----------------------------- */
 
@@ -239,4 +253,5 @@ export function countByGrade(grade: GradeRung): number {
   return GRADE_COUNT[grade] ?? 0
 }
 
+/** 词库总词数（进度分母 / 晋级门槛 / 查词覆盖范围一致） */
 export const TOTAL = ALL_WORDS.length

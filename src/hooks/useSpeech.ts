@@ -9,9 +9,20 @@ let _progressLabel = ''
 let sessionShared: any = null
 let sessionZh: any = null
 let initPromiseShared: Promise<void> | null = null
+let initPromiseZh: Promise<void> | null = null
 let audioShared: AudioBufferSourceNode | null = null
 let audioCtxShared: AudioContext | null = null
 let reqIdShared = 0
+
+// 播放状态必须模块级共享：SpeakerBtn / 设置页 / 复习页 / 闯关页会同时存在多个
+// useSpeech 实例，若各自 useState，某处 stop() 后其他实例的按钮会一直显示「播放中」。
+let _speaking = false
+const speakingSubscribers = new Set<(v: boolean) => void>()
+function emitSpeaking(v: boolean): void {
+  if (_speaking === v) return
+  _speaking = v
+  speakingSubscribers.forEach((fn) => fn(v))
+}
 
 // 共享 AudioContext（Web Audio 在 Android WebView 下对本地 wav 播放最稳定，
 // 优于 new Audio(blobUrl).play()——后者在 WebView 中常静音且不报错）。
@@ -112,50 +123,65 @@ function onProgressChange(fn: (p: { pct: number; label: string }) => void) {
   return () => { progressSubscribers.delete(fn) }
 }
 
-/** Manually trigger model download. Safe to call multiple times. */
+/**
+ * 中文模型按需加载：只在第一次朗读中文时创建另一个会话。
+ * 冷启动因此只需下载英文模型（约 60MB），而不是一次性拉两个模型。
+ */
+async function initChineseSession(): Promise<void> {
+  if (sessionZh?.ready) return
+  if (initPromiseZh) return initPromiseZh
+  initPromiseZh = (async () => {
+    const { TtsSession } = await import('@realtimex/piper-tts-web')
+    const sess = await TtsSession.create({
+      voiceId: 'zh_CN-huayan-medium',
+      fallbackStrategy: 'local',
+      allowLocalModels: true,
+      wasmPaths: {
+        onnxWasm: `${import.meta.env.BASE_URL}tts/onnx/`,
+        piperData: `${import.meta.env.BASE_URL}tts/piper/`,
+        piperWasm: `${import.meta.env.BASE_URL}tts/piper/`,
+      },
+      progress: (p: { url: string; total: number; loaded: number }) => {
+        if (p.total > 0) {
+          emitProgress(50 + Math.round((p.loaded / p.total) * 50), '加载中文语音模型…')
+        }
+      },
+    })
+    // 防御断言：两个语音必须是独立会话。若库仍为单例（补丁未生效），
+    // 二次 create 会复用同一实例并覆盖 _wasmPaths，导致 predict 必败。
+    if (sess === sessionShared) {
+      throw new Error('TtsSession 复用了同一实例（单例补丁未生效），中英文会话必须独立')
+    }
+    if (!sess?.ready) throw new Error('Chinese TtsSession not ready after create')
+    sessionZh = sess
+    emitProgress(100, '完成')
+  })().catch((err) => {
+    initPromiseZh = null
+    sessionZh = null
+    throw err
+  })
+  return initPromiseZh
+}
+
+/**
+ * 冷启动预加载（APK 专属）：只加载英文模型。
+ * Android WebView 要求 audio.play() 处在用户手势链内，必须在启动时就把会话备好；
+ * 中文模型延迟到首次中文朗读。非 Capacitor 环境走原生 SpeechSynthesis，不调用本函数。
+ */
 export async function downloadModel(): Promise<void> {
-  // 仅当英文/中文 session 都已就绪时才跳过，避免假 ready（status=ready 但 session 为 null）导致永不重建
-  if (sessionShared?.ready && sessionZh?.ready) return
+  if (sessionShared?.ready) return
   if (_status === 'downloading' && initPromiseShared) return initPromiseShared
 
   emit('downloading')
   emitProgress(0, '准备中…')
   initPromiseShared = (async () => {
     try {
-      // Phase 1: load WASM engine (ONNX + Piper phonemize)
       emitProgress(5, '加载引擎…')
       const { TtsSession } = await import('@realtimex/piper-tts-web')
-
-      // downloadModel 仅在 APK 环境被调用（浏览器走原生 SpeechSynthesis）。
       // 离线优先：allowLocalModels + local 策略，不回退 CDN。
-      const strategy = 'local'
-
       sessionShared = await TtsSession.create({
         voiceId: 'en_US-lessac-medium',
-        fallbackStrategy: strategy,
-        allowLocalModels: true,
-        wasmPaths: {
-          onnxWasm: `${import.meta.env.BASE_URL}tts/onnx/`,
-          piperData: `${import.meta.env.BASE_URL}tts/piper/`,
-          piperWasm: `${import.meta.env.BASE_URL}tts/piper/`,
-        },
-          progress: (p: { url: string; total: number; loaded: number }) => {
-            if (p.total > 0) {
-              const modelPct = Math.round((p.loaded / p.total) * 100)
-              emitProgress(10 + Math.round(modelPct * 0.4), '加载英文语音模型…')
-            }
-          },
-        })
-      if (sessionShared?.ready) {
-        emitProgress(50, '英文模型就绪，加载中文模型…')
-      } else {
-        throw new Error('TtsSession not ready after create')
-      }
-
-      // 同时加载中文语音模型（zh_CN-huayan-medium），与英文共用同一 Piper 引擎。
-      sessionZh = await TtsSession.create({
-        voiceId: 'zh_CN-huayan-medium',
-        fallbackStrategy: strategy,
+        fallbackStrategy: 'local',
         allowLocalModels: true,
         wasmPaths: {
           onnxWasm: `${import.meta.env.BASE_URL}tts/onnx/`,
@@ -164,27 +190,16 @@ export async function downloadModel(): Promise<void> {
         },
         progress: (p: { url: string; total: number; loaded: number }) => {
           if (p.total > 0) {
-            const modelPct = Math.round((p.loaded / p.total) * 100)
-            emitProgress(50 + Math.round(modelPct * 0.45), '加载中文语音模型…')
+            emitProgress(10 + Math.round((p.loaded / p.total) * 90), '加载英文语音模型…')
           }
         },
       })
-      // 防御断言：两个语音必须是独立会话。若库仍为单例（补丁未生效），
-      // 二次 create 会复用同一实例并覆盖 _wasmPaths，导致 predict 必败
-      // （wasm 被当目录 fetch → 拿到 index.html → magic word 错误）。
-      if (sessionZh === sessionShared) {
-        throw new Error('TtsSession 复用了同一实例（单例补丁未生效），中英文会话必须独立')
-      }
-      if (sessionZh?.ready) {
-        emitProgress(100, '完成')
-        emit('ready')
-      } else {
-        throw new Error('Chinese TtsSession not ready after create')
-      }
+      if (!sessionShared?.ready) throw new Error('TtsSession not ready after create')
+      emitProgress(100, '完成')
+      emit('ready')
     } catch (err) {
       console.error('Piper TTS download failed:', err)
       emit('error')
-      // Reset so user can retry
       initPromiseShared = null
       sessionShared = null
       throw err
@@ -207,7 +222,10 @@ export function getDownloadProgress(): { pct: number; label: string } {
  * zh_CN-huayan-medium (Mandarin) for Chinese text.
  */
 export function useSpeech() {
-  const [speaking, setSpeaking] = useState(false)
+  // speaking 用模块级共享状态，setSpeaking 直接指向 emitSpeaking（引用稳定，
+  // 不需要进任何 useCallback 的依赖数组）。
+  const [speaking, setSpeakingState] = useState(_speaking)
+  const setSpeaking = emitSpeaking
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<DownloadStatus>(_status)
   const [progress, setProgress] = useState<{ pct: number; label: string }>({
@@ -219,6 +237,10 @@ export function useSpeech() {
   useEffect(() => onStatusChange(setStatus), [])
   // Sync shared download progress into local state
   useEffect(() => onProgressChange(setProgress), [])
+  useEffect(() => {
+    speakingSubscribers.add(setSpeakingState)
+    return () => { speakingSubscribers.delete(setSpeakingState) }
+  }, [])
 
   // 浏览器环境：预热 SpeechSynthesis 语音列表（部分浏览器需异步 loaded）。
   useEffect(() => {
@@ -288,31 +310,41 @@ export function useSpeech() {
     [],
   )
 
-  // Ensure session: wait for download if in progress, trigger download if idle
+  // 冷启动只备好英文会话；中文会话在首次中文朗读时按需创建。
   const ensureSession = useCallback(async (lang: 'en' | 'zh' = 'en') => {
-    const sess = lang === 'zh' ? sessionZh : sessionShared
-    if (sess?.ready) return sess
-    if (_status === 'downloading') {
-      await initPromiseShared
-      return lang === 'zh' ? sessionZh : sessionShared!
+    if (!sessionShared?.ready) {
+      if (_status === 'error') {
+        _status = 'idle'
+        emit('idle')
+      }
+      setLoading(true)
+      try {
+        if (_status === 'downloading' && initPromiseShared) await initPromiseShared
+        else await downloadModel()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('Piper 初始化失败:', err)
+        throw new Error('Piper init failed: ' + msg)
+      } finally {
+        setLoading(false)
+      }
     }
-    // idle or error → trigger download
-    if (_status === 'error') {
-      // Reset before retry
-      _status = 'idle'
-      emit('idle')
+    if (lang === 'en') return sessionShared!
+
+    if (!sessionZh?.ready) {
+      setLoading(true)
+      try {
+        emitProgress(50, '加载中文语音模型…')
+        await initChineseSession()
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('中文 Piper 初始化失败:', err)
+        throw new Error('Piper init failed: ' + msg)
+      } finally {
+        setLoading(false)
+      }
     }
-    setLoading(true)
-    try {
-      await downloadModel()
-      setLoading(false)
-      return lang === 'zh' ? sessionZh : sessionShared!
-    } catch (err) {
-      setLoading(false)
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error('Piper 初始化失败:', err)
-      throw new Error('Piper init failed: ' + msg)
-    }
+    return sessionZh!
   }, [])
 
   const speak = useCallback(
@@ -343,7 +375,11 @@ export function useSpeech() {
             setSpeaking(false)
             onEnded?.()
           }
-          u.onerror = () => setSpeaking(false)
+          u.onerror = () => {
+            setSpeaking(false)
+            // 连播队列靠 onEnded 推进，报错时也必须走完回调链否则永久卡住。
+            onEnded?.()
+          }
           window.speechSynthesis.speak(u)
         } catch (err) {
           console.error('SpeechSynthesis speak failed:', err)
@@ -394,12 +430,16 @@ export function useSpeech() {
         try {
           // 超时保护：Piper phonemize wasm 在部分 WebView 下会永久挂起（既不 resolve 也不 reject）。
           // 超时后回退到系统 TTS，保证至少能出声。
-          audioBlob = await Promise.race<Blob>([
-            session.predict(text),
-            new Promise<Blob>((_, reject) =>
-              setTimeout(() => reject(new Error('predict-timeout(8s)')), 8000),
-            ),
-          ])
+          let timeoutId: number | undefined
+          const timeout = new Promise<Blob>((_, reject) => {
+            timeoutId = window.setTimeout(() => reject(new Error('predict-timeout(8s)')), 8000)
+          })
+          try {
+            audioBlob = await Promise.race<Blob>([session.predict(text), timeout])
+          } finally {
+            // 原先每次朗读都会残留一个 8s 定时器，连播时会不断堆积。
+            if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+          }
         } catch (pe) {
           if (id !== reqIdShared) return
           const pm = pe instanceof Error ? pe.message : String(pe)
@@ -468,12 +508,11 @@ export function useSpeech() {
   const stop = useCallback(() => {
     // 使所有在途 speak（仍在等模型/合成）失效，避免停止后又冒出上一句
     reqIdShared += 1
-    if (!isCapacitor) {
-      // 浏览器：停止原生语音合成
-      if (synthAvailable) window.speechSynthesis.cancel()
-      setSpeaking(false)
-      return
-    }
+    // 无论是否已有音频节点，都要复位共享状态：模型加载 / predict 在途时两个节点都还是 null。
+    emitSpeaking(false)
+    // Piper 超时会回退到系统 TTS，此时也必须能停掉。
+    if (synthAvailable) window.speechSynthesis.cancel()
+    if (!isCapacitor) return
     if (audioSharedHtml) {
       try {
         audioSharedHtml.pause()
@@ -500,7 +539,7 @@ export function useSpeech() {
     }
   }, [])
 
-  // 浏览器环境：无需下载模型，视为永久 ready，loading 始终 false。
+  // 产品目标为 APK；非 Capacitor 仅用于本地 vite 预览，走系统 TTS，视为永久 ready。
   const browserReady = !isCapacitor
   const finalStatus: DownloadStatus = browserReady ? 'ready' : status
   const finalLoading = browserReady ? false : loading

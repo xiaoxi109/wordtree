@@ -1,0 +1,24 @@
+diff --git a/node_modules/@capacitor/filesystem/android/build.gradle b/node_modules/@capacitor/filesystem/android/build.gradle
+index a2a8925..4392165 100644
+--- a/node_modules/@capacitor/filesystem/android/build.gradle
++++ b/node_modules/@capacitor/filesystem/android/build.gradle
+@@ -55,8 +55,8 @@ android {
+         abortOnError = false
+     }
+     compileOptions {
+-        sourceCompatibility JavaVersion.VERSION_21
+-        targetCompatibility JavaVersion.VERSION_21
++        sourceCompatibility JavaVersion.VERSION_17
++        targetCompatibility JavaVersion.VERSION_17
+     }
+     publishing {
+         singleVariant("release")
+@@ -64,7 +64,7 @@ android {
+ }
+ 
+ kotlin {
+-    jvmToolchain(21)
++    jvmToolchain(17)
+ }
+ 
+ repositories {

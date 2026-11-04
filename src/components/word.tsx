@@ -67,6 +67,7 @@ export const CAT_DOT: Record<CategoryId, string> = {
   grammar: 'bg-slate-400',
   questions: 'bg-blue-500',
   toys: 'bg-yellow-500',
+  idioms: 'bg-indigo-500',
 }
 
 export function LevelBadge({ level }: { level: Level }) {
@@ -165,9 +166,18 @@ export function WordCard({
   const showZh = mode !== 'en'
   const pos = posShort(word)
   return (
-    <button
-      type="button"
+    // 外层不能用 <button>：内部还要放「掌握勾选」和 SpeakerBtn 两个可交互控件，
+    // 原生 button 嵌套会让键盘 Tab / Enter 行为错乱。改用带 role 的 div + 键盘处理。
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onOpen()
+        }
+      }}
       className={`group relative flex flex-col items-start gap-1 overflow-hidden rounded-[16px] border p-3 text-left transition duration-200 hover:-translate-y-0.5 hover:shadow-soft active:scale-[0.995] ${
         mastered
           ? 'border-brand-200/60 bg-brand-50/40 dark:border-brand-500/20 dark:bg-brand-500/5'
@@ -188,30 +198,24 @@ export function WordCard({
             </span>
           )}
         </div>
-        <span
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
           title={mastered ? '已掌握' : '标记为已掌握'}
           aria-label={mastered ? '已掌握' : '标记为已掌握'}
+          aria-pressed={mastered}
           onClick={(e) => {
             e.stopPropagation()
             onToggleMastered()
           }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              e.stopPropagation()
-              onToggleMastered()
-            }
-          }}
-          className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition ${
+          onKeyDown={(e) => e.stopPropagation()}
+          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition ${
             mastered
               ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
               : 'border-slate-300/70 bg-white/40 text-transparent hover:border-brand-400 hover:text-brand-400 dark:border-slate-600 dark:bg-slate-900/30'
           }`}
         >
           <CheckIcon width={14} height={14} />
-        </span>
+        </button>
       </div>
       <div className="relative mt-1.5 flex w-full min-w-0 items-baseline justify-between gap-2">
         {showEn ? (
@@ -235,7 +239,7 @@ export function WordCard({
           {word.meaning}
         </span>
       )}
-    </button>
+    </div>
   )
 }
 
@@ -398,7 +402,11 @@ export function WordModal({
       title=""
       footer={
         <button
-          onClick={onToggleMastered}
+          onClick={() => {
+            // 标记/取消掌握是一次完成态操作，完成后直接关闭详情弹层回到词表。
+            onToggleMastered()
+            onClose()
+          }}
           className={`flex w-full items-center justify-center gap-2 rounded-[18px] py-3.5 text-sm font-semibold transition active:scale-[0.985] ${
             mastered
               ? 'bg-brand-600 text-white shadow-float hover:bg-brand-700'
@@ -562,6 +570,7 @@ export function FilterBar({
     setShowUnmastered?.(true)
     setShowMastered?.(false)
     setPosFilter?.(new Set())
+    setSearch('')
   }
 
   return (

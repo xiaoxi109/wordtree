@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
+import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { useSpeech } from '../hooks/useSpeech'
 import { AiSettingsFields } from '../components/AiSettings'
 import { ActionSheet } from '../components/Sheet'
@@ -97,19 +98,39 @@ function SyncProgressActions({
   onToast: OnToast
   onImported: (arr: string[]) => void
 }) {
-  const exportProgress = () => {
+  const exportProgress = async () => {
     try {
       const data = localStorage.getItem('lexicore-mastered') || '[]'
-      const blob = new Blob([JSON.stringify(JSON.parse(data), null, 2)], { type: 'application/json' })
+      const text = JSON.stringify(JSON.parse(data), null, 2)
+      const filename = `lexicore-progress-${new Date().toISOString().slice(0, 10)}.json`
+
+      if (Capacitor.isNativePlatform()) {
+        // Android WebView 不处理 blob: 下载，必须走原生 Filesystem 真正落盘，
+        // 否则界面报「成功」而用户拿不到任何文件。
+        await Filesystem.writeFile({
+          path: filename,
+          data: text,
+          directory: Directory.Documents,
+          encoding: Encoding.UTF8,
+        })
+        onToast(`已导出到 文档/${filename}`, 'success')
+        return
+      }
+
+      // 本地 vite 预览：保留浏览器下载，但等 click 完成后再 revoke。
+      const blob = new Blob([text], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'lexicore-progress.json'
+      a.download = filename
+      document.body.appendChild(a)
       a.click()
-      URL.revokeObjectURL(url)
+      a.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
       onToast('已导出掌握进度', 'success')
-    } catch {
-      onToast('导出失败', 'error')
+    } catch (err) {
+      console.error('导出进度失败:', err)
+      onToast('导出失败，请检查存储权限', 'error')
     }
   }
 
@@ -123,8 +144,10 @@ function SyncProgressActions({
       try {
         const text = await file.text()
         const arr = JSON.parse(text)
-        if (!Array.isArray(arr)) throw new Error('格式错误')
-        onImported(arr)
+        if (!Array.isArray(arr) || !arr.every((x) => typeof x === 'string')) {
+          throw new Error('格式错误')
+        }
+        onImported(arr as string[])
         onToast(`已导入 ${arr.length} 个进度`, 'success')
       } catch {
         onToast('导入失败：文件格式不正确', 'error')
@@ -136,11 +159,11 @@ function SyncProgressActions({
   return (
     <div className="grid grid-cols-2 gap-2">
       <button onClick={exportProgress} className="btn-soft !text-[13px]">
-        <UploadIcon width={15} height={15} />
+        <DownloadIcon width={15} height={15} />
         导出进度
       </button>
       <button onClick={importProgress} className="btn-soft !text-[13px]">
-        <DownloadIcon width={15} height={15} />
+        <UploadIcon width={15} height={15} />
         导入进度
       </button>
     </div>
@@ -156,6 +179,7 @@ export default function SettingsView({
   onOpenLlm,
   onToast,
   onImport,
+  onClearProgress,
   route,
   setRoute,
   currentRung,
@@ -168,6 +192,7 @@ export default function SettingsView({
   onOpenLlm: () => void
   onToast: OnToast
   onImport: (words: string[]) => void
+  onClearProgress: () => void
   route: Route
   setRoute: (r: Route) => void
   currentRung: GradeRung | LevelRung
@@ -207,8 +232,10 @@ export default function SettingsView({
     localStorage.removeItem('lexicore-mastered')
     localStorage.removeItem('lexicore-study')
     localStorage.removeItem('lexicore-ai-review')
+    localStorage.removeItem('lexicore-streak')
+    // 直接更新内存状态，不再靠 reload：避免丢失页面栈/滚动，也让首页连续天数立刻归零。
+    onClearProgress()
     onToast('已清除学习进度', 'success')
-    setTimeout(() => location.reload(), 700)
   }
 
   return (
@@ -390,14 +417,15 @@ export default function SettingsView({
   )
 }
 
-/** 大模型设置（三级页）：从设置进入，整页编辑 API 配置。 */
+/** 大模型设置（三级页）：从设置进入，管理可用模型与当前启用项。 */
 export function LlmSettingsView({ onToast }: { onToast: OnToast }) {
   const isWeb = !Capacitor.isNativePlatform()
   return (
     <div className="pb-8">
       <section className="surface-flat mb-4 px-4 py-3">
         <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-          支持 OpenAI 兼容接口（含中转站）。配置只写入本机 localStorage，Key 不会上传到任何服务器。
+          自定义模型支持任意 OpenAI 兼容接口（含中转站），配置仅写入本机 localStorage。
+          系统默认模型由应用内置，不可修改或查看详情。
           {isWeb && ' 网页版受浏览器跨域限制，接口需返回 CORS 允许头才能请求成功；安卓 App 走原生请求，无此限制。'}
         </p>
       </section>

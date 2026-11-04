@@ -2,6 +2,15 @@ import type { LessonGroup, TopicId } from './cluster'
 import { TOPIC_LABEL } from './cluster'
 import { FUNCTION_WORD_LIST } from './vocab'
 import type { ChatMessage } from './llm'
+import {
+  GRADE_RUNGS,
+  LEVEL_RUNGS,
+  gradeToLevel,
+  levelToGrades,
+  type GradeRung,
+  type LevelRung,
+  type Route,
+} from '../data/levels'
 
 export type Difficulty = 'adaptive' | 'A1' | 'A2' | 'B1' | 'B2'
 export type LessonKind = 'story' | 'dialogue' | 'diary' | 'email' | 'article' | 'poem'
@@ -101,6 +110,60 @@ export const DIFFICULTIES: { id: Difficulty; label: string; hint: string }[] = [
 
 export function difficultyHint(d: Difficulty): string {
   return (DIFFICULTIES.find((x) => x.id === d) ?? DIFFICULTIES[0]).hint
+}
+
+/* ------------------- 难度档 × 设置里的阶梯等级模式 ------------------- */
+/**
+ * 内部难度值始终是 CEFR 档位（planner / prompt / 数据库都用它），
+ * 只有显示标签跟随设置里的「学习路线」：西式显示 A1…，中式显示年级。
+ */
+
+type ConcreteDifficulty = Exclude<Difficulty, 'adaptive'>
+
+function levelToDifficulty(level: LevelRung): ConcreteDifficulty {
+  if (level === 'Pre-A1' || level === 'A1') return 'A1'
+  if (level === 'A2') return 'A2'
+  if (level === 'B1') return 'B1'
+  return 'B2'
+}
+
+function rungLevel(route: Route, rung: GradeRung | LevelRung): LevelRung | null {
+  if (route === 'grade') {
+    return GRADE_RUNGS.some((g) => g.id === rung) ? gradeToLevel(rung as GradeRung) : null
+  }
+  return LEVEL_RUNGS.some((l) => l.id === rung) ? (rung as LevelRung) : null
+}
+
+/** 设置里的「我的等级」落在哪一档，用于生成条件里标注对应关系。 */
+export function difficultyForRung(
+  route: Route,
+  rung: GradeRung | LevelRung,
+): ConcreteDifficulty | null {
+  const level = rungLevel(route, rung)
+  return level ? levelToDifficulty(level) : null
+}
+
+/** 按阶梯模式生成难度选项；中式路线下「我的等级」所在档直接用该年级名做标签。 */
+export function difficultyOptions(route: Route, currentRung?: GradeRung | LevelRung) {
+  const myDifficulty = currentRung ? difficultyForRung(route, currentRung) : null
+  const myLabel = route === 'grade'
+    ? GRADE_RUNGS.find((g) => g.id === currentRung)?.label
+    : undefined
+  return DIFFICULTIES.map((d) => {
+    const id = d.id
+    if (route !== 'grade' || id === 'adaptive') return d
+    const fallback = GRADE_RUNGS.find((g) => g.id === levelToGrades(id)[0])?.label
+    return { ...d, label: (id === myDifficulty && myLabel) || fallback || d.label }
+  })
+}
+
+/** 难度值在界面上的显示名（自适应 / CEFR 等级 / 中式年级）。 */
+export function difficultyText(
+  route: Route,
+  difficulty: Difficulty,
+  currentRung?: GradeRung | LevelRung,
+): string {
+  return difficultyOptions(route, currentRung).find((d) => d.id === difficulty)?.label ?? '自适应'
 }
 
 export function outputFormat(kind: LessonKind): string {

@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { isConfigReady, loadLlmConfig, saveLlmConfig, type LlmConfig } from '../config/llm'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { isConfigReady, loadLlmConfig, LLM_CONFIG_CHANGED_EVENT, type LlmConfig } from '../config/llm'
 import { TOPICS } from '../lib/cluster'
 import {
-  DIFFICULTIES,
   LESSON_FORMATS,
+  difficultyForRung,
+  difficultyOptions,
+  difficultyText,
   formatMeta,
   type Difficulty,
   type LessonFormatChoice,
@@ -13,6 +15,7 @@ import { deleteLesson, listLessons, type Lesson } from '../db'
 import { getReviewWords } from '../lib/review'
 import { MODE_LABEL, type LearningMode, type GeneratedPlan } from '../lib/planner'
 import type { Level } from '../data'
+import { GRADE_RUNGS, LEVEL_RUNGS, type GradeRung, type LevelRung, type Route } from '../data/levels'
 import LessonReader from './LessonReader'
 import { Sheet, ActionSheet } from '../components/Sheet'
 import {
@@ -40,10 +43,11 @@ import {
  *
  * 生成条件 Sheet：
  *   ① 三种模式大按钮（🎯巩固 / ✨日常 / 🚀拉伸）— 选了自动覆盖词数/难度/复习比
- *   ② 每篇重点词数（上方标「系统推荐 X」）
- *   ③ 句式难度（上方标「系统推荐 Y」）
- *   ④ 题材侧重
- *   ⑤ 课程体裁
+ *   ② 句式难度（上方标「系统推荐 Y」）
+ *   ③ 题材侧重
+ *   ④ 课程体裁
+ *
+ * 每篇重点词数完全由 src/lib/planner.ts 依据学习者画像动态推荐，不提供手动设置。
  */
 export default function AiView({
   masteredSet,
@@ -55,6 +59,8 @@ export default function AiView({
   onBack,
   activeLevels,
   targetLevel,
+  route = 'level',
+  currentRung,
 }: {
   masteredSet: Set<string>
   onApplyMark: (word: string[], mode: 'add' | 'remove') => void
@@ -65,6 +71,10 @@ export default function AiView({
   onBack: () => void
   activeLevels?: Level[]
   targetLevel?: Level | null
+  /** 设置里的学习路线：决定句式难度按西式等级还是中式年级显示 */
+  route?: Route
+  /** 设置里的「我的等级」 */
+  currentRung?: GradeRung | LevelRung
 }) {
   const [lessons, setLessons] = useState<Lesson[] | null>(null)
   const [mode, setMode] = useState<LearningMode>('daily')
@@ -87,7 +97,12 @@ export default function AiView({
     activeLevels,
     targetLevel ?? null,
   )
-  // 用户是否 override 了默认词数/难度（override 后显示为 override 值）
+  // 难度选项的显示名跟随设置里的阶梯模式（内部值仍是 CEFR 档位）
+  const difficultyChoices = useMemo(
+    () => difficultyOptions(route, currentRung),
+    [route, currentRung],
+  )
+  // 用户是否手动覆盖了系统推荐难度（词数跟随 planner 动态推荐，无覆盖）
   const userOverrode = difficulty !== 'adaptive' && difficulty !== recommended.difficulty
 
   const refreshLessons = useCallback(async () => {
@@ -107,12 +122,15 @@ export default function AiView({
     void refreshLessons()
   }, [readerLessonId, refreshLessons])
 
-  // 切回 AI 标签时重新读取配置
+  // 切回 AI 标签、或在设置里切换启用模型时，立即同步连接配置与启用状态。
   useEffect(() => {
-    if (active) {
+    const sync = () => {
       setCfg(loadLlmConfig())
       setReviewCount(getReviewWords().length)
     }
+    if (active) sync()
+    window.addEventListener(LLM_CONFIG_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(LLM_CONFIG_CHANGED_EVENT, sync)
   }, [active])
 
   // 生成结束 / 错误提示
@@ -133,12 +151,10 @@ export default function AiView({
   const generating = progress.status === 'generating'
   const configReady = isConfigReady(cfg)
 
-  // 当模式变化时，同步更新词数和难度为推荐值（除非用户手动 override 过）
+  // 模式切换 / 掌握词数 / 目标等级变化都会改变推荐难度（除非用户手动 override 过）
   useEffect(() => {
-    // 模式切换 → 自动对齐推荐难度；词数在 Sheet 里手动控制
     if (!userOverrode) setDifficulty(recommended.difficulty)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode])
+  }, [mode, recommended.difficulty, userOverrode])
 
   const startGenerate = async () => {
     if (generating) return
@@ -147,10 +163,8 @@ export default function AiView({
       return
     }
     try {
-      // 传给 generate 的 overrides：如果用户没 override，传 undefined 让 plan 里的值生效
-      const overrides: { wordsPerLesson?: number; difficulty?: Difficulty } = {}
-      // 词数只有在用户手动改过的时候才 override
-      if (cfg.wordsPerLesson !== recommended.wordsPerLesson) overrides.wordsPerLesson = cfg.wordsPerLesson
+      // 词数完全交给 planner 的动态推荐；这里只可能覆盖用户手动选的难度。
+      const overrides: { difficulty?: Difficulty } = {}
       if (difficulty !== 'adaptive' && difficulty !== recommended.difficulty) overrides.difficulty = difficulty
 
       const lesson = await generate(
@@ -158,7 +172,7 @@ export default function AiView({
         cfg,
         { topic, difficulty: difficulty === 'adaptive' ? recommended.difficulty : difficulty, format },
         mode,
-        overrides.wordsPerLesson !== undefined || overrides.difficulty !== undefined ? overrides : undefined,
+        overrides.difficulty !== undefined ? overrides : undefined,
         activeLevels,
         targetLevel ?? null,
       )
@@ -176,12 +190,6 @@ export default function AiView({
     },
     [onApplyMark],
   )
-
-  const updateWordsPerLesson = (n: number) => {
-    const next = { ...cfg, wordsPerLesson: n }
-    setCfg(next)
-    saveLlmConfig(next)
-  }
 
   /* ------------------------------ 阅读器 ------------------------------ */
   if (readerLessonId) {
@@ -202,7 +210,13 @@ export default function AiView({
 
   const modeMeta = MODE_LABEL[mode]
   const topicLabel = TOPICS.find((t) => t.id === topic)?.label ?? '随机'
-  const difficultyLabel = DIFFICULTIES.find((d) => d.id === difficulty)?.label ?? '自适应'
+  const difficultyLabel = difficultyText(route, difficulty, currentRung)
+  const recommendedDifficultyLabel = difficultyText(route, recommended.difficulty, currentRung)
+  const rungMetaLabel = route === 'grade'
+    ? GRADE_RUNGS.find((g) => g.id === currentRung)?.label
+    : LEVEL_RUNGS.find((l) => l.id === currentRung)?.label
+  const myRungLabel = currentRung ? (rungMetaLabel ?? String(currentRung)) : null
+  const myDifficulty = currentRung ? difficultyForRung(route, currentRung) : null
   const formatLabel = format === 'auto' ? '自动混搭' : formatMeta(format).label
 
   return (
@@ -225,7 +239,7 @@ export default function AiView({
             {modeMeta.emoji} {modeMeta.label}
           </span>
           <span className="text-[13px] font-bold text-slate-800 dark:text-slate-100">
-            {recommended.wordsPerLesson} 词 · {recommended.difficulty === 'adaptive' ? '自适应' : recommended.difficulty}
+            {recommended.wordsPerLesson} 词 · {recommendedDifficultyLabel}
           </span>
         </div>
         <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
@@ -276,7 +290,7 @@ export default function AiView({
           className="mt-2 flex w-full items-center gap-2 rounded-[10px] bg-slate-900/[0.04] px-3 py-1.5 text-left transition hover:bg-slate-900/[0.07] active:scale-[0.995] dark:bg-white/[0.06] dark:hover:bg-white/10"
         >
           <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-400">
-            自定义：{modeMeta.label} · 词数 {cfg.wordsPerLesson} · 难度 {difficultyLabel} · {topicLabel}
+            自定义：{modeMeta.label} · 词数 {recommended.wordsPerLesson}（自动） · 难度 {difficultyLabel} · {topicLabel}
           </span>
           <ChevronRightIcon width={14} height={14} className="shrink-0 text-slate-300" />
         </button>
@@ -385,49 +399,24 @@ export default function AiView({
             </div>
           </div>
 
-          {/* 每篇词数（标注推荐值） */}
-          <div>
-            <div className="mb-1.5 flex items-baseline justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                每篇重点词数
-              </p>
-              <p className="text-[10px] font-semibold text-brand-600 dark:text-brand-300">
-                系统推荐 {recommended.wordsPerLesson} · 当前 {cfg.wordsPerLesson}
-              </p>
-            </div>
-            <div className="flex gap-1.5">
-              {[12, 16, 20, 24, 28].map((n) => (
-                <button
-                  key={n}
-                  onClick={() => updateWordsPerLesson(n)}
-                  className={`flex-1 rounded-[14px] py-2.5 text-sm font-semibold transition duration-200 active:scale-95 ${
-                    cfg.wordsPerLesson === n
-                      ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
-                      : 'bg-slate-900/5 text-slate-600 hover:bg-slate-900/10 dark:bg-white/10 dark:text-slate-300'
-                  }`}
-                >
-                  {n}
-                  {recommended.wordsPerLesson === n && (
-                    <span className="ml-0.5 text-[9px] align-middle text-brand-400">✦</span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* 句式难度（标注推荐值） */}
+          {/* 句式难度（等级按设置里的阶梯模式显示，标注推荐值与我的等级） */}
           <div>
             <div className="mb-1.5 flex items-baseline justify-between">
               <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
                 句式难度
               </p>
               <p className="text-[10px] font-semibold text-brand-600 dark:text-brand-300">
-                系统推荐 {recommended.difficulty === 'adaptive' ? '自适应' : recommended.difficulty}
+                系统推荐 {recommendedDifficultyLabel}
                 {difficulty !== 'adaptive' && difficulty !== recommended.difficulty && ' · 已自定义'}
               </p>
             </div>
+            {myRungLabel && (
+              <p className="mb-1.5 text-[10px] text-slate-400 dark:text-slate-500">
+                当前：{route === 'grade' ? '中式阶梯' : '西式阶梯'} · 我的等级 {myRungLabel}
+              </p>
+            )}
             <div className="no-scrollbar flex flex-wrap gap-1.5">
-              {DIFFICULTIES.map((d) => {
+              {difficultyChoices.map((d) => {
                 const rec = d.id === recommended.difficulty
                 return (
                   <button
@@ -437,12 +426,17 @@ export default function AiView({
                   >
                     {d.label}
                     {rec && <span className="ml-0.5 text-[9px] text-brand-500">✦</span>}
+                    {d.id === myDifficulty && (
+                      <span className="ml-0.5 text-[9px] text-slate-400 dark:text-slate-500">· 我的等级</span>
+                    )}
                   </button>
                 )
               })}
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
-              选「自适应」让模型贴合你的实际水平；选具体等级会强制难度向上/向下对齐。
+              {route === 'grade'
+                ? '按中式阶梯显示年级，与设置里的「我的等级」同一体系；选「自适应」让模型贴合你的实际水平。'
+                : '选「自适应」让模型贴合你的实际水平；选具体等级会强制难度向上/向下对齐。'}
             </p>
           </div>
 

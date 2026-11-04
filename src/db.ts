@@ -240,11 +240,12 @@ export async function getLessonWords(id: string): Promise<LessonWord[]> {
 export async function getLessonMarks(id: string): Promise<LessonMark[]> {
   const doc = await getDoc(id)
   if (!doc) return []
-  const now = Date.now()
+  // 与 getLessonFull 保持同一时间口径：marks 内嵌在文档里，没有独立时间戳，
+  // 不能用「读取时刻」伪造，否则 SQL 导出会把导出时间当成标记时间。
   return Object.entries(doc.marks).map(([word_key, state]) => ({
     word_key,
     state,
-    updated_at: now,
+    updated_at: doc.updated_at,
   }))
 }
 
@@ -256,47 +257,44 @@ export async function saveLessonContent(
   segments: LessonSegment[],
   coverage: { hit: number; total: number; missing?: string[]; known?: number; realWords?: number },
 ): Promise<void> {
-  const doc = await getDoc(id)
-  if (!doc) return
   const sortedSegments = [...segments]
     .sort((a, b) => a.position - b.position)
     .map((seg, i) => ({ ...seg, position: i }))
-  doc.title = title
-  doc.kind = kind
-  doc.segments = sortedSegments
-  doc.status = 'ready'
-  doc.error = undefined
-  doc.coverage_hit = coverage.hit
-  doc.coverage_total = coverage.total
-  doc.coverage_known = coverage.known
-  doc.coverage_real_words = coverage.realWords
-  doc.updated_at = Date.now()
-  await putDoc(doc)
+  await updateDoc(id, (doc) => {
+    doc.title = title
+    doc.kind = kind
+    doc.segments = sortedSegments
+    doc.status = 'ready'
+    doc.error = undefined
+    doc.coverage_hit = coverage.hit
+    doc.coverage_total = coverage.total
+    doc.coverage_known = coverage.known
+    doc.coverage_real_words = coverage.realWords
+    doc.updated_at = Date.now()
+  })
 }
 
 export async function saveLessonError(id: string, message: string): Promise<void> {
-  const doc = await getDoc(id)
-  if (!doc) return
-  doc.status = 'failed'
-  doc.error = message
-  doc.updated_at = Date.now()
-  await putDoc(doc)
+  await updateDoc(id, (doc) => {
+    doc.status = 'failed'
+    doc.error = message
+    doc.updated_at = Date.now()
+  })
 }
 
 export async function saveLessonMark(id: string, word_key: string, state: WordMarkState): Promise<void> {
-  const doc = await getDoc(id)
-  if (!doc) return
-  doc.marks = { ...doc.marks, [word_key]: state }
-  doc.updated_at = Date.now()
-  await putDoc(doc)
+  await updateDoc(id, (doc) => {
+    doc.marks = { ...doc.marks, [word_key]: state }
+    doc.updated_at = Date.now()
+  })
 }
 
 export async function markLessonRead(id: string): Promise<void> {
-  const doc = await getDoc(id)
-  if (!doc || doc.read_at) return
-  doc.read_at = Date.now()
-  doc.updated_at = Date.now()
-  await putDoc(doc)
+  await updateDoc(id, (doc) => {
+    if (doc.read_at) return
+    doc.read_at = Date.now()
+    doc.updated_at = Date.now()
+  })
 }
 
 /** 删除单篇课程。 */
@@ -324,10 +322,19 @@ async function getDoc(id: string): Promise<LessonDocument | null> {
   return r ?? null
 }
 
-async function putDoc(doc: LessonDocument): Promise<void> {
+/**
+ * 单事务「读 → 改 → 写」，避免并发更新时后写者覆盖前写者。
+ * IndexedDB 事务只在 request 成功的那个微任务内保持活跃，因此 mutate 必须同步，
+ * 且 put 要紧跟 get 的 await（中间不能再 await 其他 Promise）。
+ */
+async function updateDoc(id: string, mutate: (doc: LessonDocument) => void): Promise<void> {
   const db = await open()
   const tx = db.transaction(LESSONS, 'readwrite')
-  tx.objectStore(LESSONS).put(doc)
+  const store = tx.objectStore(LESSONS)
+  const doc = await requestToPromise(store.get(id) as IDBRequest<LessonDocument | undefined>)
+  if (!doc) return
+  mutate(doc)
+  store.put(doc)
   await txDone(tx)
 }
 

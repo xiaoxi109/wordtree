@@ -95,7 +95,8 @@ export default function App() {
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   })
   const [route, setRoute] = useState<Route>(() => {
-    return (localStorage.getItem('lexicore-route') as Route) || 'level'
+    // 旧版/损坏的 localStorage 可能写入任意字符串，直接强转会让 activeLevels 得到空窗口。
+    return localStorage.getItem('lexicore-route') === 'grade' ? 'grade' : 'level'
   })
   const [currentRung, setCurrentRung] = useState<GradeRung | LevelRung>(() => {
     const saved = localStorage.getItem('lexicore-rung')
@@ -104,7 +105,10 @@ export default function App() {
   })
   const [masteredArr, setMasteredArr] = useState<string[]>(() => {
     try {
-      return JSON.parse(localStorage.getItem('lexicore-mastered') || '[]')
+      const parsed: unknown = JSON.parse(localStorage.getItem('lexicore-mastered') || '[]')
+      // 损坏数据（例如 '{}'）会让 new Set(masteredArr) 抛错直接白屏。
+      if (!Array.isArray(parsed)) return []
+      return parsed.filter((w): w is string => typeof w === 'string')
     } catch {
       return []
     }
@@ -227,6 +231,10 @@ export default function App() {
   // 朗读同步播放，避免首次 await 加载模型后 audio.play() 失去手势被 Android WebView 拦截。
   const { preload } = useSpeech()
   useEffect(() => {
+    // 预加载是 APK 专属：Android WebView 要求 audio.play() 处在用户手势链内，
+    // 所以启动时就把英文模型备好；中文模型改为首次中文朗读时按需加载。
+    // 非原生平台（本地 vite 预览）走系统 SpeechSynthesis，不加载离线模型。
+    if (!Capacitor.isNativePlatform()) return
     preload().catch(() => {})
   }, [preload])
 
@@ -264,6 +272,8 @@ export default function App() {
   useEffect(() => {
     const dark = theme === 'dark'
     document.documentElement.classList.toggle('dark', dark)
+    // 与 index.html 的内联初始化同步，避免系统深色 + 应用浅色时原生控件混色。
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
     localStorage.setItem('lexicore-theme', theme)
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0e100c' : '#f6f3ea')
 
@@ -397,6 +407,7 @@ export default function App() {
             onToggleMastered={(w) => toggleMastered(w.word)}
             activeLevels={activeLevelsList}
             defaultFilter="active"
+            currentRung={currentRung}
           />
         )
       case 'study':
@@ -405,7 +416,7 @@ export default function App() {
             route={route}
             masteredSet={masteredSet}
             onApplyMark={applyMastered}
-            active={false /* 页面栈内不走 tab，主动管理 */}
+            active={pages[pages.length - 1]?.kind === 'study'}
           />
         )
       case 'level':
@@ -438,13 +449,14 @@ export default function App() {
             currentRung={currentRung}
             masteredSet={new Set(masteredArr)}
             onComplete={(passed, nextRung) => {
+              // 只上报晋级结果。结果页必须留在屏幕上，由用户点「完成」后经 onCancel 返回，
+              // 否则这里 popPage 会在 setPhase('result') 生效前把组件卸载。
               if (passed && nextRung) {
                 setCurrentRung(nextRung)
                 pushToast(`🎉 晋级到 ${nextRung}`, 'success')
               } else if (!passed) {
                 pushToast('闯关未通过，继续加油 💪', 'info')
               }
-              popPage()
             }}
             onCancel={popPage}
           />
@@ -454,8 +466,9 @@ export default function App() {
 
   return (
     <div
+      id="app-scroll"
       ref={rootScrollRef}
-      className={`h-screen overflow-y-auto bg-transparent text-slate-900 transition-colors dark:text-slate-100 ${theme === 'dark' ? 'dark' : ''}`}
+      className={`h-[100dvh] overflow-y-auto bg-transparent text-slate-900 transition-colors ${theme === 'dark' ? 'dark' : ''}`}
     >
       <main
         className={`mx-auto max-w-5xl px-4 pt-[calc(env(safe-area-inset-top)+16px)] ${
@@ -519,6 +532,8 @@ export default function App() {
                 onBack={popPage}
                 activeLevels={activeLevelsList}
                 targetLevel={aiTargetLevel}
+                route={route}
+                currentRung={currentRung}
               />
             )}
           </div>
@@ -533,6 +548,10 @@ export default function App() {
                 onOpenLlm={() => pushPage({ kind: 'llm' })}
                 onToast={pushToast}
                 onImport={importMastered}
+                onClearProgress={() => {
+                  setMasteredArr([])
+                  setStreak(0)
+                }}
                 route={route}
                 setRoute={setRoute}
                 currentRung={currentRung}

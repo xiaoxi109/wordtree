@@ -42,7 +42,7 @@ export interface ChatMessage {
 export interface ChatJsonOptions {
   temperature?: number
   maxTokens?: number
-  /** 毫秒；Android 原生 Http 生效，Web 回退用 AbortController */
+  /** 毫秒；仅作为 CapacitorHttp 的 readTimeout（原生 HTTP 生效） */
   timeoutMs?: number
 }
 
@@ -50,7 +50,9 @@ const DEFAULT_TIMEOUT = 90_000
 
 /**
  * 调用 OpenAI 兼容 chat/completions 并解析出 JSON。
- * Android 上走 CapacitorHttp 原生实现（绕过 WebView CORS），Web 上回退 fetch。
+ * 全程走 CapacitorHttp（绕过 WebView CORS）。CapacitorHttp 不支持 AbortSignal，
+ * 因此「取消生成」由上层 useAiLessons 在请求间隙检查 shouldCancel 实现：
+ * 已经发出的请求无法中断，但返回后不会解析、重试或写库。
  */
 export async function chatJSON(
   cfg: LlmConfig,

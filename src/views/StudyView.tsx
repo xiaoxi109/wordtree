@@ -100,6 +100,20 @@ export default function StudyView({
 
   useEffect(() => () => stop(), [stop])
 
+  // 开启「朗读」后每次切到新卡片自动发音；中文模式下英文读完接中文释义。
+  const autoplayKey = session?.[index]?.key
+  useEffect(() => {
+    if (!autoplay || !autoplayKey || !session) return
+    const w = session[index]
+    if (!w) return
+    const t = window.setTimeout(() => {
+      speak(w.word, 0.9, () => {
+        if (displayMode === 'zh' && w.meaning) speak(w.meaning, 0.9, undefined, 'zh')
+      })
+    }, 200)
+    return () => window.clearTimeout(t)
+  }, [autoplay, autoplayKey, session, index, displayMode, speak])
+
   const startRound = () => {
     stop()
     loadDeck()
@@ -121,7 +135,7 @@ export default function StudyView({
         source: 'study',
         grade: grade === 'good' ? 'known' : 'unknown',
         reaction_ms: Date.now() - shownAt,
-      })
+      }).catch((err) => console.error('写入学习事件失败:', err))
 
       setStats((s) => ({ ...s, [grade]: s[grade] + 1 }))
       setIndex((i) => i + 1)
@@ -135,7 +149,16 @@ export default function StudyView({
   const done = index >= (session?.length ?? 0)
   const card = session?.[index]
 
-  if (done || !session || !card) {
+  // session 为 null 表示牌堆还在加载，不能当成「本轮完成」渲染。
+  if (!session) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center text-sm text-slate-400">
+        正在准备复习卡片…
+      </div>
+    )
+  }
+
+  if (done || !card) {
     return (
       <FinishScreen
         stats={stats}
@@ -256,11 +279,7 @@ export default function StudyView({
             {/* 眼睛图标 toggle */}
             <button
               type="button"
-              onClick={() => {
-                const next = !revealed
-                setRevealed(next)
-                if (next && autoplay) speak(card.word)
-              }}
+              onClick={() => setRevealed(!revealed)}
               aria-label={revealed ? '收起答案' : '显示答案'}
               className="shrink-0 rounded-full border border-slate-200/70 bg-white/80 p-2 text-slate-400 transition hover:text-slate-700 active:scale-95 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:text-slate-100"
             >
@@ -312,7 +331,7 @@ export default function StudyView({
                       >
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-[14px] leading-relaxed text-slate-800 dark:text-slate-100">
-                            {isZh ? ex.en || '' : ex.en || ''}
+                            {ex.en || ''}
                           </p>
                           {ex.en && (
                             <SpeakerBtn
@@ -323,9 +342,9 @@ export default function StudyView({
                             />
                           )}
                         </div>
-                        {(ex.zh || ex.en) && (isBoth || ex.zh) && (
+                        {ex.zh && (
                           <p className="mt-1 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
-                            {isZh ? ex.en : ex.zh}
+                            {ex.zh}
                           </p>
                         )}
                       </li>

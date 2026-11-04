@@ -92,13 +92,16 @@ export default function GradeView({
         posCounts={posCounts}
       />
 
-      <WordGrid
-        words={filtered}
-        masteredSet={masteredSet}
-        mode={displayMode}
-        onOpen={onOpen}
-        onToggleMastered={onToggleMastered}
-      />
+      {/* FilterBar 是 fixed(~72px)，需额外让开，否则首批词卡被压住 */}
+      <div className="pt-[76px]">
+        <WordGrid
+          words={filtered}
+          masteredSet={masteredSet}
+          mode={displayMode}
+          onOpen={onOpen}
+          onToggleMastered={onToggleMastered}
+        />
+      </div>
     </>
   )
 }

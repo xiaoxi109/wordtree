@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Word } from '../data'
 import { checkAdvancement, gradeQuiz, pickQuizWords, ADVANCEMENT_CONFIG } from '../lib/advancement'
 import { SpeakerBtn, LevelBadge } from './word'
@@ -27,6 +27,9 @@ interface QuizProps {
  *   - intro：显示当前状态和闯关目标
  *   - quiz：逐条判断临界词（认识/不认识）
  *   - result：显示结果，通过则晋级
+ *
+ * onComplete 只负责上报晋级结果，绝不负责卸载页面；结果页由本组件展示，
+ * 用户点「完成 / 返回」后经 onCancel 退出。
  */
 export function AdvancementQuiz({ route, currentRung, masteredSet, onComplete, onCancel }: QuizProps) {
   const check = checkAdvancement(route, currentRung, masteredSet)
@@ -34,7 +37,9 @@ export function AdvancementQuiz({ route, currentRung, masteredSet, onComplete, o
   const [questions] = useState<Word[]>(() => pickQuizWords(route, currentRung))
   const [index, setIndex] = useState(0)
   const [knowns, setKnowns] = useState<boolean[]>([])
-  const { speak, stop } = useSpeech()
+  const { stop } = useSpeech()
+  // 防止快速双击「认识」重复提交导致 index 越界 / 重复上报晋级。
+  const submittingRef = useRef(false)
 
   const targetLabel = (() => {
     if (!check.nextRung) return null
@@ -45,30 +50,30 @@ export function AdvancementQuiz({ route, currentRung, masteredSet, onComplete, o
   })()
 
   const submit = (known: boolean) => {
+    if (submittingRef.current) return
+    submittingRef.current = true
     stop()
     const next = [...knowns, known]
     setKnowns(next)
     if (index + 1 >= questions.length) {
-      // 最后一题，进入结果
       const result = gradeQuiz(next)
       setPhase('result')
-      if (result.passed) {
-        onComplete(true, check.nextRung)
-      } else {
-        onComplete(false, null)
-      }
+      onComplete(result.passed, result.passed ? check.nextRung : null)
     } else {
       setIndex(index + 1)
     }
+    // 与渲染解耦地释放锁，避免同一帧内连点。
+    window.setTimeout(() => { submittingRef.current = false }, 0)
   }
 
   const result = phase === 'result' ? gradeQuiz(knowns) : null
+  const hasAnswers = knowns.length > 0
 
   return (
     <div className="flex min-h-full flex-col">
       {/* 顶部 */}
       <div className="mb-3 flex items-center justify-between gap-2">
-        <button onClick={onCancel} className="icon-btn !h-9 !w-9">
+        <button onClick={onCancel} aria-label="返回" className="icon-btn !h-9 !w-9">
           <ArrowLeftIcon width={18} height={18} />
         </button>
         <h2 className="font-display text-[16px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
@@ -121,11 +126,24 @@ export function AdvancementQuiz({ route, currentRung, masteredSet, onComplete, o
             </div>
           </div>
 
-          <QuizCard word={questions[index]} onKnown={() => submit(true)} onUnknown={() => submit(false)} onSpeak={(text) => speak(text, 0.9)} />
+          <QuizCard word={questions[index]} onKnown={() => submit(true)} onUnknown={() => submit(false)} />
         </div>
       )}
 
-      {phase === 'result' && result && (
+      {/* 尚未达到闯关条件时进来的空结果态，避免显示「0/0 · 0%」 */}
+      {phase === 'result' && !hasAnswers && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
+          <p className="text-base font-bold text-slate-800 dark:text-slate-100">尚未达到闯关条件</p>
+          <p className="max-w-xs text-xs leading-relaxed text-slate-400">
+            当前等级还需掌握更多单词，继续背词后再来挑战吧
+          </p>
+          <button onClick={onCancel} className="btn-soft mt-2 !px-8 !py-3">
+            返回首页
+          </button>
+        </div>
+      )}
+
+      {phase === 'result' && hasAnswers && result && (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
           {result.passed ? (
             <>
@@ -142,9 +160,12 @@ export function AdvancementQuiz({ route, currentRung, masteredSet, onComplete, o
               </div>
               {check.nextRung && (
                 <p className="rounded-[16px] bg-brand-50 px-4 py-2 text-sm font-semibold text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
-                  即将晋级到 {targetLabel}
+                  已晋级到 {targetLabel}
                 </p>
               )}
+              <button onClick={onCancel} className="btn-ink mt-2 !px-8 !py-3">
+                完成
+              </button>
             </>
           ) : (
             <>
@@ -177,23 +198,16 @@ function QuizCard({
   word,
   onKnown,
   onUnknown,
-  onSpeak,
 }: {
   word: Word
   onKnown: () => void
   onUnknown: () => void
-  onSpeak: (text: string) => void
 }) {
   return (
     <div className="rounded-[26px] border border-slate-200/60 bg-white/85 p-5 shadow-float dark:border-slate-700/50 dark:bg-slate-800/60">
       <div className="flex items-center justify-between gap-2">
         <LevelBadge level={word.level} />
-        <button
-          onClick={() => onSpeak(word.word)}
-          className="btn-ghost !h-9 !w-9 !p-0"
-        >
-          <SpeakerBtn text={word.word} iconSize={18} className="!h-9 !w-9" />
-        </button>
+        <SpeakerBtn text={word.word} iconSize={18} className="!h-9 !w-9" />
       </div>
 
       <div className="mt-5 text-center">

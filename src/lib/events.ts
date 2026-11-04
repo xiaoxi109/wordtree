@@ -48,8 +48,11 @@ export function aggregate(events: WordEvent[], wordKey?: string): WordTrajectory
     prevState = e.grade
   }
 
-  const dirEnZh = sorted.filter((e) => e.direction === 'en→zh' && e.grade !== 'skipped')
-  const dirZhEn = sorted.filter((e) => e.direction === 'zh→en' && e.grade !== 'skipped')
+  // 'both' 是默认显示模式（AI 阅读器也固定写 both），代表两个方向都练到了。
+  // 必须同时计入 en→zh 与 zh→en，否则 known_rate_* 恒为 0，画像/薄弱项评估失真。
+  const notSkipped = sorted.filter((e) => e.grade !== 'skipped')
+  const dirEnZh = notSkipped.filter((e) => e.direction === 'en→zh' || e.direction === 'both')
+  const dirZhEn = notSkipped.filter((e) => e.direction === 'zh→en' || e.direction === 'both')
 
   const knownCountEnZh = dirEnZh.filter((e) => e.grade === 'known').length
   const knownRateEnZh = dirEnZh.length > 0 ? knownCountEnZh / dirEnZh.length : 0

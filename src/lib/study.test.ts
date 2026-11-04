@@ -125,7 +125,7 @@ describe('背词组卡', () => {
     expect(session).toEqual([])
   })
 
-  it('masteredOnly：只返回已掌握的词，且不受分批上限限制', () => {
+  it('masteredOnly：只返回已掌握的词，且受 limit 分批限制', () => {
     const a1 = ALL_WORDS.filter((w) => w.level === 'A1')
     const mastered = new Set(a1.slice(0, 40).map((w) => w.word))
 
@@ -135,10 +135,32 @@ describe('背词组卡', () => {
       wrongOnly: false,
       masteredSet: mastered,
       masteredOnly: true,
+      limit: 20,
       now: NOW,
     })
-    expect(session).toHaveLength(40)
+    expect(session).toHaveLength(20)
     expect(session.every((c) => mastered.has(c.word))).toBe(true)
     expect(session.every((c) => c.stage === 'review')).toBe(true)
+  })
+
+  it('masteredOnly：SRS 到期词排在最前', () => {
+    const a1 = ALL_WORDS.filter((w) => w.level === 'A1')
+    const mastered = new Set(a1.slice(0, 40).map((w) => w.word))
+    const late = a1[39]
+    const key = wordKey(late.word)
+    localStorage.setItem('lexicore-study', JSON.stringify({
+      [key]: { key, box: 0, dueAt: NOW - DAY, lastAt: NOW - 2 * DAY, seen: 1, lapses: 0 },
+    }))
+
+    const session = buildStudySession({
+      source: 'cefr',
+      scope: 'A1',
+      wrongOnly: false,
+      masteredSet: mastered,
+      masteredOnly: true,
+      limit: 20,
+      now: NOW,
+    })
+    expect(session[0].word).toBe(late.word)
   })
 })

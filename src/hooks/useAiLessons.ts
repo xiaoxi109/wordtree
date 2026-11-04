@@ -72,7 +72,7 @@ export function useAiLessons() {
       cfg: LlmConfig,
       condition: LessonCondition,
       mode: LearningMode,
-      overrides?: { wordsPerLesson?: number; difficulty?: Difficulty },
+      overrides?: { difficulty?: Difficulty },
       allowedLevels?: Level[],
       targetLevel?: Level | null,
     ): Promise<Lesson> => {
@@ -98,10 +98,9 @@ export function useAiLessons() {
           isReview: true,
         }))
 
-      // 画像 → 推荐计划 → 用户 override
+      // 画像 → 推荐计划（词数由 planner 动态决定）→ 用户仅可覆盖难度
       const profile = buildLearnerProfile(pool, reviewRaw, targetLevel ?? null, loadStreak())
       let plan = recommend(profile, mode)
-      if (overrides?.wordsPerLesson !== undefined) plan = { ...plan, wordsPerLesson: overrides.wordsPerLesson }
       if (overrides?.difficulty !== undefined) plan = { ...plan, difficulty: overrides.difficulty }
 
       const group = pickOneGroup(pool, reviewPool, reviewRaw, plan, condition.topic)
@@ -339,6 +338,9 @@ async function generateOne(
       const obj = await chatJSON(cfg, messages, {
         maxTokens: estimateMaxTokens(kind, group.words.length),
       })
+      // CapacitorHttp 不支持 AbortSignal，只能在请求返回后立刻检查取消，
+      // 保证此后不再解析/重试/写库。
+      if (shouldCancel()) throw new Error('canceled')
       const parsed = parseLessonContent(obj)
       const content: LessonContent = { ...parsed, kind }
 
@@ -365,7 +367,14 @@ async function generateOne(
       }
       break
     } catch (e) {
+      // 取消不能被当成普通错误重试，也不该额外 sleep。
+      if (e instanceof Error && e.message === 'canceled') throw e
+      if (shouldCancel()) throw new Error('canceled')
       if (e instanceof LlmError && (e.kind === 'auth' || e.kind === 'rate')) throw e
+      // 保留「内容无法解析 / 内容为空」这类可操作提示，不要吞成笼统的「生成失败」。
+      if (e instanceof LlmError && (e.kind === 'json' || e.kind === 'empty') && attempt === MAX_ATTEMPTS - 1) {
+        throw e
+      }
       await sleep(800 * (attempt + 1))
     }
   }

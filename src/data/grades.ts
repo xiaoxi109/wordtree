@@ -75,7 +75,14 @@ function isPersonName(zh: string): boolean {
  * 数据来源：cyforkk/pep-english-words（人教版 PEP 词库，MIT），由生成脚本从逐册
  * JSON 聚合并写入 `pepGrades.ts`。
  */
+let cachedByGrade: Record<GradeId, Word[]> | null = null
+
+/**
+ * 整表只构建一次：年级页、study/cluster/dict 等所有消费方共享同一份结果。
+ * 原先各 lib 模块各调一次并各自缓存，导致同一份 PEP 全表在进程内重复构建 4~5 次。
+ */
 export function wordsByGrade(): Record<GradeId, Word[]> {
+  if (cachedByGrade) return cachedByGrade
   const out: Record<GradeId, Word[]> = {
     primary: [],
     g7: [],
@@ -102,6 +109,7 @@ export function wordsByGrade(): Record<GradeId, Word[]> {
           meaning: full.meaning,
           examples: full.examples,
           category: categoryOf(full.word, full.category),
+          common: full.common,
           pepOnly: false,
           grade: g.id,
         })
@@ -122,11 +130,11 @@ export function wordsByGrade(): Record<GradeId, Word[]> {
       }
     }
   }
+  cachedByGrade = out
   return out
 }
 
-/** 整表只构建一次：年级页 / 人教首页共用同一份缓存。 */
-let cachedByGrade: Record<GradeId, Word[]> | null = null
+/** 与 wordsByGrade 等价，保留给语义上强调「取缓存」的调用方。 */
 export function getWordsByGrade(): Record<GradeId, Word[]> {
-  return (cachedByGrade ??= wordsByGrade())
+  return wordsByGrade()
 }

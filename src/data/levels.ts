@@ -143,6 +143,31 @@ export function activeLevels(route: Route, current: GradeRung | LevelRung): Leve
   }
 }
 
+/**
+ * 词库筛选条的「我的等级」默认值：让筛选条选中设置里当前等级对应的那一项。
+ * - 西式路线选同名的 CEFR 等级，中式路线选同名的年级；
+ * - 旧数据 / 跨路线残留的 rung 按对照表换算；
+ * - 词库上限为 B2，设置成 C1/C2 时回落到 B2（筛选条没有对应选项）。
+ */
+export function rungToFilters(
+  route: Route,
+  current: GradeRung | LevelRung,
+): { levelFilter: Level | 'all'; gradeFilter: GradeRung | 'all' } {
+  if (route === 'grade') {
+    const matched = GRADE_RUNGS.find((g) => g.id === current)
+    const mapped = matched ? [] : levelToGrades(current as LevelRung)
+    return {
+      levelFilter: 'all',
+      gradeFilter: matched?.id ?? mapped[0] ?? 'all',
+    }
+  }
+
+  const level = LEVEL_RUNGS.find((l) => l.id === current)?.id
+    ?? gradeToLevel(current as GradeRung)
+  const usable: Level = level === 'C1' || level === 'C2' ? 'B2' : level
+  return { levelFilter: usable, gradeFilter: 'all' }
+}
+
 /** 获取下一个中式 rung（用于闯关晋级） */
 export function nextGrade(current: GradeRung): GradeRung | null {
   const order = gradeOrder(current)

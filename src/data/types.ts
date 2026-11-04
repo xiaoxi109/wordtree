@@ -43,6 +43,7 @@ export type CategoryId =
   | 'grammar'     // 基础功能词
   | 'questions'   // 疑问词
   | 'toys'        // 玩具与游戏
+  | 'idioms'      // 常用短语与口语表达
 
 export interface CategoryMeta {
   id: CategoryId
@@ -67,8 +68,7 @@ export interface Word {
   category?: CategoryId
   /** High-frequency / everyday word — shown as 常用. */
   common?: boolean
-  /** Marked true for words from the supplementary extension package (not in the
-   *  official CEFR list); shown with an 扩展/补充 badge and excluded from stats. */
+  /** COCA 扩展包标记。扩展包当前未并入词库（见 index.ts Step 1），字段保留供日后接入。 */
   extended?: boolean
   /** Marked true for words that exist in the 人教版 (PEP) grade list but are NOT
    *  in the main word library — their 音标/释义 come from PEP data (no examples / category). */

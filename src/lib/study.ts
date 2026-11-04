@@ -46,7 +46,7 @@ export interface StudyBuildOptions {
   wrongOnly: boolean
   masteredSet: Set<string>
   /**
-   * 只复习已掌握的词（默认背词页用）：取该范围内的全部已掌握词，不分批、不掺新词。
+   * 只复习已掌握的词（默认背词页用）：到期词优先，按 limit 分批，不掺新词/错词。
    */
   masteredOnly?: boolean
   limit?: number
@@ -110,14 +110,14 @@ export function getStudyRecords(): Record<string, StudyRecord> {
 export function applyStudyGrade(key: string, grade: StudyGrade, now = Date.now()): StudyRecord {
   const records = readRecords()
   const prev = records[key]
-  const prevSeen = prev?.seen ?? 0
   let box = 0
   let dueAt = now + BOX_INTERVALS_DAYS[0] * DAY // 默认 1 天后再来
   let lapses = prev?.lapses ?? 0
 
   if (grade === 'good') {
-    // 间隔档位 = 之前见过的次数；第一次 good 进 BOX_INTERVALS_DAYS[0]（1 天）
-    box = Math.min(MAX_BOX, prevSeen)
+    // 逐级推进 Leitner 盒号：首次 good 落在第 0 格（1 天后），
+    // again / hard 归零后从 0 重新爬，不再受累计 seen 次数影响。
+    box = Math.min(MAX_BOX, (prev?.box ?? -1) + 1)
     dueAt = now + BOX_INTERVALS_DAYS[box] * DAY
   } else if (grade === 'hard') {
     box = 0
@@ -144,7 +144,7 @@ export function applyStudyGrade(key: string, grade: StudyGrade, now = Date.now()
 /** 这张卡如果点「认识」，下次隔多少天复习（用于按钮提示）。 */
 export function goodIntervalDays(key: string): number {
   const record = readRecords()[key]
-  const nextBox = Math.min(MAX_BOX, record?.seen ?? 0) // 下次 good 的 box = 当前 seen 次数
+  const nextBox = Math.min(MAX_BOX, (record?.box ?? -1) + 1) // 与 applyStudyGrade 的晋级口径一致
   return BOX_INTERVALS_DAYS[nextBox]
 }
 
@@ -275,11 +275,23 @@ export function buildStudySession(opts: StudyBuildOptions): StudyCard[] {
         : w.grade === opts.scope,
   )
 
-  // 只复习已掌握的词：全量返回（不分批，也不掺新词/错词）
+  // 只复习已掌握的词：SRS 到期词优先，其次按最久未复习补位；
+  // 每轮最多 limit 张，避免一次会话把全部已掌握词塞进来。
   if (opts.masteredOnly) {
-    return scoped
+    const candidates = scoped
       .filter((w) => opts.masteredSet.has(w.word))
-      .map((w) => toCard(w, wordKey(w.word), 'review'))
+      .map((w) => ({ word: w, key: wordKey(w.word), rec: records[wordKey(w.word)] }))
+    // 无记录 = 从未复习（dueAt 视为 0），不能把它当成「已到期」抢在真正到期词前面。
+    const rank = (rec?: StudyRecord): number => {
+      if (!rec || rec.seen === 0) return 1
+      return rec.dueAt <= now ? 0 : 2
+    }
+    candidates.sort((a, b) => {
+      const diff = rank(a.rec) - rank(b.rec)
+      if (diff !== 0) return diff
+      return (a.rec?.dueAt ?? 0) - (b.rec?.dueAt ?? 0)
+    })
+    return candidates.slice(0, limit).map(({ word, key }) => toCard(word, key, 'review'))
   }
 
   const byKey = new Map<string, Word>()

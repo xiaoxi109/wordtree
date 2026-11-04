@@ -76,9 +76,10 @@ describe('词性筛选匹配', () => {
 
 describe('真实词库覆盖', () => {
   it('CEFR 词库每个词都能映射到具体词性', () => {
-    // 只检查 CEFR 主库词（pepOnly=false），PEP 专有词无词性数据属正常
+    // 只校验「有词性标注」的词：PEP 专有词与 COCA 扩展词本身没有 pos 字段、
+    // 释义也是英文，无法归类属数据缺失而不是解析器问题（约 7000 条）。
     const unmapped = ALL_WORDS.filter((w) => {
-      if (w.pepOnly) return false
+      if (w.pepOnly || !w.pos?.trim()) return false
       const tags = posTags(w)
       return tags.length === 1 && tags[0] === 'other'
     })
