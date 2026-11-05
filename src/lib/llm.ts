@@ -1,7 +1,7 @@
 import { CapacitorHttp } from '@capacitor/core'
 import type { LlmConfig } from '../config/llm'
 
-export type LlmErrorKind = 'auth' | 'rate' | 'network' | 'server' | 'json' | 'empty'
+export type LlmErrorKind = 'auth' | 'rate' | 'network' | 'server' | 'json' | 'empty' | 'badrequest'
 
 /** 带分类的 LLM 错误，UI 据此给出可操作提示。 */
 export class LlmError extends Error {
@@ -21,9 +21,11 @@ export function llmErrorMessage(err: unknown): string {
       case 'rate':
         return '请求过于频繁，已超出服务端速率限制，请稍后重试'
       case 'network':
-        return '网络连接失败，请检查网络或 API 地址'
+        return '网络连接失败。若是电脑浏览器预览，第三方接口受跨域(CORS)限制会被拦截，请改用 App（APK）内测试；若在 App 内仍失败，请检查 API 地址、密钥与网络'
       case 'server':
         return '服务端返回错误，请稍后重试'
+      case 'badrequest':
+        return '请求被服务端拒绝（HTTP 400/404）。多为模型名不存在、接口路径错误或参数不合法，请核对模型名与 Base URL'
       case 'json':
         return '模型返回内容无法解析，请重试'
       case 'empty':
@@ -87,6 +89,9 @@ export async function chatJSON(
     })
     if (resp.status === 401 || resp.status === 403) throw new LlmError('auth', `HTTP ${resp.status}`)
     if (resp.status === 429) throw new LlmError('rate', 'HTTP 429')
+    // 400/404 通常是模型名不存在、接口路径错误或参数不合法，单独归类以区分 CORS
+    if (resp.status === 400 || resp.status === 404)
+      throw new LlmError('badrequest', `HTTP ${resp.status}: ${excerpt(resp.data)}`)
     if (resp.status >= 500) throw new LlmError('server', `HTTP ${resp.status}`)
     if (resp.status >= 400) throw new LlmError('network', `HTTP ${resp.status}: ${excerpt(resp.data)}`)
     raw = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data)

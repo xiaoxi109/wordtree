@@ -309,6 +309,9 @@ function ModelForm({
     <div className="space-y-3.5 pt-1">
       <Field label="名称" value={name} onChange={setName} placeholder="例如：我的 GPT-4o" />
       <Field label="API 地址（Base URL）" value={baseUrl} onChange={setBaseUrl} placeholder="https://api.openai.com/v1" />
+      <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+        只填到 /v1 或 /v2 即可，系统会自动拼接 /chat/completions，请勿填完整接口地址（如 …/chat/completions）
+      </p>
       <div>
         <Field
           label="API Key"

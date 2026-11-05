@@ -53,8 +53,13 @@ export const LLM_CONFIG_STORAGE_KEY = 'lexicore-ai-config'
 export const LLM_CONFIG_CHANGED_EVENT = 'lexicore-llm-config-changed'
 
 function normalize(cfg: LlmConfig): LlmConfig {
+  const base = (cfg.baseUrl || '').trim().replace(/\/+$/, '')
+  // 用户常把完整接口地址（含 /chat/completions）当作 Base URL 填入，
+  // 系统会再拼接一次导致 …/chat/completions/chat/completions。
+  // 这里把结尾的 chat 路径尾缀剥掉，使其回归到 /v1、/v2 这类目录。
+  const baseUrl = base.replace(/\/(?:chat\/completions|chat|completions)\/?$/i, '') || base
   return {
-    baseUrl: (cfg.baseUrl || '').trim().replace(/\/+$/, ''),
+    baseUrl,
     apiKey: (cfg.apiKey || '').trim(),
     model: (cfg.model || '').trim(),
   }
