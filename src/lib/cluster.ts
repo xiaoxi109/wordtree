@@ -195,6 +195,15 @@ function injectReview(groups: LessonGroup[], review: PoolWord[], per: number): v
   }
 }
 
+/**
+ * 场景标签显示名：兼容早期直接把 category id（如 `people`）写进 lesson.scene_label 的数据，
+ * 统一转成中文场景名，避免界面上冒出内部英文键。
+ */
+export function sceneLabelText(label: string): string {
+  if (!label || label === 'mixed') return '综合场景'
+  return CATEGORY_LABEL[label] ?? label
+}
+
 function makeGroup(cat: CategoryId | 'mixed', words: PoolWord[]): LessonGroup {
   return {
     id: `${cat}-${words.map((w) => w.key).join('_').slice(0, 40)}-${words.length}`,

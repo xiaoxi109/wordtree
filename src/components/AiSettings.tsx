@@ -14,6 +14,7 @@ import { chatJSON, llmErrorMessage } from '../lib/llm'
 import { buildTestMessages } from '../lib/prompt'
 import { ActionSheet, Sheet } from './Sheet'
 import {
+  BoltIcon,
   CheckIcon,
   EditIcon,
   EyeIcon,
@@ -48,6 +49,7 @@ export function AiSettingsFields({ onToast }: { onToast: OnToast }) {
   const [editor, setEditor] = useState<EditorState | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<ModelEntry | null>(null)
+  const [testingId, setTestingId] = useState<string | null>(null)
 
   const refresh = () => {
     setModels(listModels())
@@ -92,30 +94,25 @@ export function AiSettingsFields({ onToast }: { onToast: OnToast }) {
     onToast(`已删除「${name}」`, 'info')
   }
 
-  const current = models.find((m) => m.id === activeId) ?? models[0]
+  const testModel = async (model: ModelEntry) => {
+    if (testingId) return
+    setTestingId(model.id)
+    try {
+      await chatJSON(
+        model.config,
+        buildTestMessages(),
+        { maxTokens: 128, temperature: 0, timeoutMs: 30_000 },
+      )
+      onToast(`「${model.name}」连接成功`, 'success')
+    } catch (e) {
+      onToast(`「${model.name}」连接失败：${llmErrorMessage(e)}`, 'error')
+    } finally {
+      setTestingId(null)
+    }
+  }
 
   return (
     <>
-      <div className="mb-3 rounded-[18px] border border-slate-200/60 bg-white/60 px-3.5 py-3 dark:border-slate-700/50 dark:bg-slate-800/40">
-        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">当前启用</p>
-        <div className="mt-1.5 flex items-center gap-2">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-600 text-white">
-            <CheckIcon width={13} height={13} />
-          </span>
-          <span className="font-display text-[15px] font-semibold text-slate-900 dark:text-slate-50">
-            {current.name}
-          </span>
-          {current.isSystem && <Badge tone="system">系统默认</Badge>}
-          <span className="ml-auto truncate text-[11px] text-slate-400">
-            {current.isSystem ? '内置模型' : current.config.model}
-          </span>
-        </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-          点击模型卡片即可切换。系统默认模型由应用内置，仅可启用，不可修改或查看详情；
-          自定义模型支持任意 OpenAI 兼容接口。
-        </p>
-      </div>
-
       <div role="radiogroup" aria-label="模型列表" className="space-y-2.5">
         {models.map((model) => {
           const selected = model.id === activeId
@@ -164,36 +161,63 @@ export function AiSettingsFields({ onToast }: { onToast: OnToast }) {
                     ? '应用内置配置'
                     : `${model.config.model || '未设置模型'} · ${hostOf(model.config.baseUrl)}`}
                 </p>
-                <p className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
-                  {model.isSystem ? (
-                    <>
-                      <LockIcon width={11} height={11} />
-                      只读 · 不可修改或查看详情
-                    </>
-                  ) : ready ? (
-                    'OpenAI 兼容接口 · 可编辑'
-                  ) : (
-                    <span className="text-amber-600 dark:text-amber-400">配置不完整，暂不可用于生成</span>
-                  )}
-                </p>
+                {!ready && (
+                  <p className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">配置不完整，暂不可用于生成</p>
+                )}
               </div>
 
-              {model.isSystem ? (
-                <LockIcon width={16} height={16} className="mt-0.5 shrink-0 text-slate-300 dark:text-slate-600" />
-              ) : (
-                <button
-                  type="button"
-                  aria-label={`编辑 ${model.name}`}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    openEdit(model)
-                  }}
-                  onKeyDown={(e) => e.stopPropagation()}
-                  className="icon-btn !h-8 !w-8 shrink-0"
-                >
-                  <EditIcon width={15} height={15} />
-                </button>
-              )}
+              <div className="flex shrink-0 items-center gap-1">
+                {ready && (
+                  <button
+                    type="button"
+                    aria-label={`测试 ${model.name} 连接`}
+                    title="测试连接"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      testModel(model)
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    disabled={testingId !== null}
+                    className="icon-btn !h-8 !w-8 !text-brand-600 disabled:opacity-50 dark:!text-brand-300"
+                  >
+                    {testingId === model.id ? (
+                      <SpinnerIcon width={15} height={15} className="animate-spin" />
+                    ) : (
+                      <BoltIcon width={15} height={15} />
+                    )}
+                  </button>
+                )}
+                {model.isSystem ? (
+                  <LockIcon width={16} height={16} className="mx-1.5 text-slate-300 dark:text-slate-600" />
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={`删除 ${model.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeleteTarget(model)
+                      }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      className="icon-btn !h-8 !w-8"
+                    >
+                      <TrashIcon width={15} height={15} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`编辑 ${model.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openEdit(model)
+                      }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                      className="icon-btn !h-8 !w-8"
+                    >
+                      <EditIcon width={15} height={15} />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           )
         })}
@@ -221,14 +245,6 @@ export function AiSettingsFields({ onToast }: { onToast: OnToast }) {
             onToast={onToast}
             onSave={handleSave}
             onCancel={() => setEditorOpen(false)}
-            onDelete={
-              editor.mode === 'edit'
-                ? () => {
-                    setDeleteTarget(editor.model)
-                    setEditorOpen(false)
-                  }
-                : undefined
-            }
           />
         )}
       </Sheet>
@@ -236,11 +252,11 @@ export function AiSettingsFields({ onToast }: { onToast: OnToast }) {
       <ActionSheet
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title="删除模型？"
-        message={`「${deleteTarget?.name ?? ''}」的配置将从本机移除。若它正在使用，会自动切换回系统默认模型。`}
+        title={deleteTarget ? `删除 ${deleteTarget.name}？` : '删除模型？'}
+        message="删除后该模型的配置将从本机移除；若它正在使用，会自动切换回系统默认模型。"
         actions={[
           {
-            label: '删除模型',
+            label: '确认删除',
             tone: 'danger',
             icon: <TrashIcon width={18} height={18} />,
             onClick: handleDelete,
@@ -271,13 +287,11 @@ function ModelForm({
   onToast,
   onSave,
   onCancel,
-  onDelete,
 }: {
   initial?: ModelEntry
   onToast: OnToast
   onSave: (input: ModelInput) => void
   onCancel: () => void
-  onDelete?: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(initial?.config.baseUrl ?? '')
@@ -354,17 +368,6 @@ function ModelForm({
           保存
         </button>
       </div>
-
-      {onDelete && (
-        <button
-          type="button"
-          onClick={onDelete}
-          className="flex w-full items-center justify-center gap-1.5 pt-1 text-[12px] font-semibold text-rose-500 transition hover:text-rose-600 dark:text-rose-400"
-        >
-          <TrashIcon width={14} height={14} />
-          删除此模型
-        </button>
-      )}
     </div>
   )
 }

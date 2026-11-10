@@ -14,6 +14,7 @@ import { useSpeech } from '../hooks/useSpeech'
 import { appendWordEvent, directionFromDisplayMode } from '../lib/events'
 import type { Route } from '../data/levels'
 import { CheckIcon, RotateCcwIcon, XIcon, EyeIcon, EyeOffIcon } from '../components/icons'
+import { SentenceStudyDeck } from '../components/SentenceStudyDeck'
 
 type Stats = { again: number; good: number }
 const EMPTY_STATS: Stats = { again: 0, good: 0 }
@@ -31,23 +32,37 @@ function shuffleCards<T>(arr: T[]): T[] {
  * 复习页面：只有「认识 / 不认识」两态。
  * 布局：整页 flex-col 三段——顶部筛选常驻 + 中间闪卡独立滚动 + 底部判级按钮贴底。
  * 无滑动手势，判级完全依赖底部按钮。
+ * 牌堆为混合牌堆（错词/到期 + 新词 + 已掌握补位），见底自动补下一批并排除已练词，
+ * 只有确实无词可练才显示结算页。
  *
  * 三种显示模式下的内容策略（见用户第 3 条需求）：
  *  - zh  → 正面：中文释义 + 词性 + 等级 + 徽章；展开：英文词形+音标
  *  - en  → 正面：英文词形+音标 + 词性 + 等级 + 徽章；展开：中文释义
  *  - both→ 正面：英文词形+音标 + 中文释义 + 词性 + 等级 + 徽章；展开：双语例句
  */
-export default function StudyView({
-  route: _route = 'level',
-  masteredSet,
-  onApplyMark,
-  active = true,
-}: {
+interface StudyViewProps {
   route?: Route
   masteredSet: Set<string>
   onApplyMark: (words: string[], mode: 'add' | 'remove') => void
   active?: boolean
-}) {
+}
+
+/** 复习页外壳：单词 / 短句两种牌堆共用一个入口。 */
+export default function StudyView(props: StudyViewProps) {
+  const [mode, setMode] = useState<'word' | 'sentence'>('word')
+  if (mode === 'sentence') {
+    return <SentenceStudyDeck active={props.active} onSwitch={() => setMode('word')} />
+  }
+  return <WordStudyDeck {...props} onSwitchToSentence={() => setMode('sentence')} />
+}
+
+function WordStudyDeck({
+  route: _route = 'level',
+  masteredSet,
+  onApplyMark,
+  active = true,
+  onSwitchToSentence,
+}: StudyViewProps & { onSwitchToSentence: () => void }) {
   const [shuffleOn, setShuffleOn] = useState(true)
   const [autoplay, setAutoplay] = useState(false)
   const [displayMode, setDisplayMode] = useDisplayMode()
@@ -62,25 +77,31 @@ export default function StudyView({
 
   const masteredRef = useRef(masteredSet)
   masteredRef.current = masteredSet
+  // 已判过的词：牌堆见底补牌时排除，避免重复刷同一批
+  const practicedRef = useRef<Set<string>>(new Set())
+  const [exhausted, setExhausted] = useState(false)
 
   const refreshCounts = useCallback(() => {
     setDueCount(getDueCount())
     setTodayCount(getTodayStudiedCount())
   }, [])
 
+  // 混合牌堆：错词/到期优先（最多 60%），再补新词与已掌握词，
+  // 不会因「只标记了 1 个词」而一点就结束。
   const buildDeck = useCallback(
     () =>
       buildStudySession({
         source: 'cefr',
         scope: 'all',
         wrongOnly: false,
-        masteredOnly: true,
         masteredSet: masteredRef.current,
       }),
     [],
   )
 
   const loadDeck = useCallback(() => {
+    practicedRef.current.clear()
+    setExhausted(false)
     const next = buildDeck()
     setSession(shuffleOn ? shuffleCards(next) : next)
     setIndex(0)
@@ -137,16 +158,30 @@ export default function StudyView({
         reaction_ms: Date.now() - shownAt,
       }).catch((err) => console.error('写入学习事件失败:', err))
 
+      practicedRef.current.add(card.key)
       setStats((s) => ({ ...s, [grade]: s[grade] + 1 }))
-      setIndex((i) => i + 1)
       setRevealed(false)
       setShownAt(Date.now())
       refreshCounts()
+
+      // 牌堆见底自动补下一批，保持卡片界面不中断
+      const nextIndex = index + 1
+      if (nextIndex >= (session?.length ?? 0)) {
+        const more = buildDeck().filter((c) => !practicedRef.current.has(c.key))
+        if (more.length > 0) {
+          const batch = shuffleOn ? shuffleCards(more) : more
+          setSession((prev) => [...(prev ?? []), ...batch])
+        } else {
+          setExhausted(true)
+        }
+      }
+      setIndex(nextIndex)
     },
-    [session, index, stop, onApplyMark, refreshCounts, shownAt, displayMode],
+    [session, index, stop, onApplyMark, refreshCounts, shownAt, displayMode, buildDeck, shuffleOn],
   )
 
-  const done = index >= (session?.length ?? 0)
+  // 只有确实没有可练的词才结算；牌堆见底会自动补牌，不再每批都弹完成页
+  const done = exhausted || (session?.length ?? 0) === 0
   const card = session?.[index]
 
   // session 为 null 表示牌堆还在加载，不能当成「本轮完成」渲染。
@@ -184,14 +219,23 @@ export default function StudyView({
       }}
     >
       {/* ── 1. 固定顶部筛选区（圆角卡片） ── */}
-      <section className="shrink-0 px-3 pb-2 pt-1">
-        <div className="flex items-center gap-1.5 rounded-[16px] border border-slate-200/70 bg-white/90 px-2.5 py-1.5 backdrop-blur-sm dark:border-white/[0.06] dark:bg-slate-900/90">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">筛选</p>
+      <section className="shrink-0 pb-2 pt-1">
+        <div className="no-scrollbar flex items-center gap-1 overflow-x-auto rounded-[16px] border border-slate-200/70 bg-white/90 px-2 py-1.5 backdrop-blur-sm dark:border-white/[0.06] dark:bg-slate-900/90">
+          <div className="flex shrink-0 items-center rounded-full bg-slate-100 p-0.5 dark:bg-white/10">
+            <span className="rounded-full bg-brand-600 px-2 py-0.5 text-[11px] font-semibold text-white">单词</span>
+            <button
+              type="button"
+              onClick={onSwitchToSentence}
+              className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:text-slate-300"
+            >
+              短句
+            </button>
+          </div>
 
           <button
             onClick={() => setShuffleOn((v) => !v)}
             aria-pressed={shuffleOn}
-            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
+            className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
               shuffleOn
                 ? 'bg-brand-600 text-white shadow-sm'
                 : 'bg-slate-100 text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
@@ -203,23 +247,36 @@ export default function StudyView({
           <button
             onClick={() => setAutoplay((v) => !v)}
             aria-pressed={autoplay}
-            className={`rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
+            className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
               autoplay
                 ? 'bg-brand-600 text-white shadow-sm'
                 : 'bg-slate-100 text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
             }`}
           >
-            朗读 {autoplay ? '开' : '关'}
+            朗读
           </button>
 
           <DisplayModeToggle value={displayMode} onChange={setDisplayMode} className="ml-auto" />
         </div>
       </section>
 
-      {/* ── 2. 卡片区：内容始终居上，超出才滚动 ── */}
-      <section className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-2 pt-1">
+      {/* ── 2. 卡片区：闪卡撑满可用高度、内容始终居上，超出才滚动 ── */}
+      <section className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-2 pt-1">
+        {/* 流式进度：不打断卡片，只显示累计判级 */}
+        <div className="mb-2 flex shrink-0 items-center justify-between px-1 text-[11px] text-slate-400">
+          <span>
+            已练 {stats.good + stats.again} · 认识{' '}
+            <span className="font-semibold text-brand-600 dark:text-brand-300">{stats.good}</span>
+            {' · '}不认识{' '}
+            <span className="font-semibold text-rose-500 dark:text-rose-300">{stats.again}</span>
+          </span>
+          <span className="tabular-nums">
+            {Math.min(index + 1, session.length)} / {session.length}
+          </span>
+        </div>
         {/* 项目风格卡片：跟 WordDetailBody 对齐 */}
-        <div className="rounded-[26px] border border-slate-200/60 bg-white/90 p-5 shadow-float dark:border-white/[0.06] dark:bg-slate-800/60">
+        <div className="flex flex-1 flex-col rounded-[26px] border border-slate-200/60 bg-white/90 p-5 shadow-float dark:border-white/[0.06] dark:bg-slate-800/60">
+          <div className="w-full">
           {/* 卡头：标题 inline 徽章 + 发音 + 眼睛 toggle */}
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
@@ -236,21 +293,11 @@ export default function StudyView({
                 </p>
               )}
 
-              {/* 音标（en/zh 模式单独一行；both 模式 inline 在词后） */}
-              {card.ipa && (
-                <p className={`${isBoth ? 'mt-0 inline text-[14px] text-slate-400' : 'mt-1.5 text-[13px] text-slate-400'}`}>
-                  {card.ipa}
-                </p>
-              )}
-
-              {/* 徽章行：词性 + 等级 + 发音喇叭 inline */}
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                <SpeakerBtn
-                  text={card.word}
-                  rate={0.85}
-                  iconSize={18}
-                  className="!h-8 !w-8 !bg-brand-50 !p-0 dark:!bg-brand-500/10"
-                />
+              {/* 音标 → 分类标签 → 发音，同一行 */}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {card.ipa && (
+                  <span className="text-[13px] text-slate-400">{card.ipa}</span>
+                )}
                 {card.pos && (
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:bg-white/[0.08] dark:text-slate-300">
                     {posShort({ pos: card.pos, meaning: card.meaning })}
@@ -266,6 +313,12 @@ export default function StudyView({
                     常用词
                   </span>
                 )}
+                <SpeakerBtn
+                  text={card.word}
+                  rate={0.85}
+                  iconSize={18}
+                  className="!h-8 !w-8 !bg-brand-50 !p-0 dark:!bg-brand-500/10"
+                />
               </div>
 
               {/* both 模式：正面就显示中文释义 */}
@@ -337,8 +390,8 @@ export default function StudyView({
                             <SpeakerBtn
                               text={ex.en}
                               rate={0.9}
-                              iconSize={14}
-                              className="-mr-0.5 -mt-0.5 shrink-0 !p-1"
+                              iconSize={18}
+                              className="-mr-1 -mt-1 shrink-0 !h-8 !w-8 !rounded-full !bg-white/80 !p-0 dark:!bg-white/10"
                             />
                           )}
                         </div>
@@ -354,40 +407,41 @@ export default function StudyView({
               )}
             </div>
           )}
+          </div>
         </div>
       </section>
 
       {/* ── 3. 底部判级按钮：无背景块，整体上移，内容居中 ── */}
-      <section className="shrink-0 px-3 pb-6 pt-1">
+      <section className="shrink-0 pb-10 pt-1">
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() => gradeCard('again')}
-            className="flex items-center justify-center gap-2 rounded-[14px] border border-rose-200/60 bg-rose-50/80 px-3 py-2.5 transition active:scale-[0.98] dark:border-rose-500/25 dark:bg-rose-500/10"
+            className="flex items-center justify-center gap-2.5 rounded-[16px] border border-rose-200/60 bg-rose-50/80 px-3 py-4 transition active:scale-[0.98] dark:border-rose-500/25 dark:bg-rose-500/10"
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-rose-500 text-white shadow-sm">
-              <XIcon width={14} height={14} />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500 text-white shadow-sm">
+              <XIcon width={16} height={16} />
             </span>
             <div className="flex flex-col items-center">
-              <span className="text-[12px] font-bold text-rose-600 dark:text-rose-300">
+              <span className="text-[13px] font-bold text-rose-600 dark:text-rose-300">
                 不认识
               </span>
-              <span className="text-[9px] text-rose-500/70">归入未掌握</span>
+              <span className="text-[10px] text-rose-500/70">归入未掌握</span>
             </div>
           </button>
           <button
             type="button"
             onClick={() => gradeCard('good')}
-            className="flex items-center justify-center gap-2 rounded-[14px] border border-brand-200/60 bg-brand-50/80 px-3 py-2.5 transition active:scale-[0.98] dark:border-brand-500/25 dark:bg-brand-500/10"
+            className="flex items-center justify-center gap-2.5 rounded-[16px] border border-brand-200/60 bg-brand-50/80 px-3 py-4 transition active:scale-[0.98] dark:border-brand-500/25 dark:bg-brand-500/10"
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm">
-              <CheckIcon width={14} height={14} />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm">
+              <CheckIcon width={16} height={16} />
             </span>
             <div className="flex flex-col items-center">
-              <span className="text-[12px] font-bold text-brand-700 dark:text-brand-300">
+              <span className="text-[13px] font-bold text-brand-700 dark:text-brand-300">
                 认识
               </span>
-              <span className="text-[9px] text-brand-600/70">
+              <span className="text-[10px] text-brand-600/70">
                 {card.stage === 'review'
                   ? `下次 ${goodIntervalDays(card.key)} 天后`
                   : '标记已掌握'}
@@ -430,10 +484,11 @@ function FinishScreen({
       ) : (
         <>
           <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-50">
-            本轮复习完成
+            今天的复习完成
           </h2>
           <p className="mt-0.5 text-[11px] text-slate-400">
-            今天已学 {todayCount} · 到期复习 {dueCount}
+            今日已练 {todayCount} 词 · 待复习 {dueCount}
+            {total > 0 && ` · 正确率 ${Math.round((stats.good / total) * 100)}%`}
           </p>
 
           {total > 0 && (
@@ -458,7 +513,7 @@ function FinishScreen({
       <div className="mt-4 flex justify-center gap-3">
         <button onClick={onRestart} className="btn-primary !py-2.5 !text-[12px]">
           <RotateCcwIcon width={12} height={12} />
-          再来一轮
+          再练一组
         </button>
       </div>
     </div>

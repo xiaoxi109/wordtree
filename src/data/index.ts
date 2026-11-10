@@ -8,6 +8,7 @@ import { CATEGORIES, categoryOf, isCommon } from './generated/categories'
 import { CATEGORY_THEMES, WORD_THEME } from './themes'
 import { PEP_GRADE_WORDS, type PepWord } from './pepGrades'
 import { PEP_ENRICH } from './pepEnrich'
+import { positiveExamples } from '../lib/positiveExamples'
 import type { Level, LevelMeta, Word, CategoryId, CategoryMeta, GradeRung } from './types'
 import type { GradeId } from './grades'
 
@@ -162,8 +163,15 @@ const idiomsWithGrade: Word[] = IDIOMS.map((w) => ({
  * ALL_WORDS — 当前生效的统一词库（CEFR 主库 + PEP 教材专有词 + 常用短语）。
  * 每个词同时携带 grade（中式）与 level（西式）；CEFR 词优先，PEP 专有词补充，IDIOMS 独立。
  * COCA 扩展包暂未并入（见 Step 1 注释），本层即学习 / 浏览 / 复习 / 查词的唯一词库。
+ *
+ * 例句在此统一过滤消极语境并按积极度排序（见 lib/positiveExamples.ts）：
+ * 这样词卡、词详情、点词弹层、复习闪卡、闯关提示拿到的都是同一份积极向上的例句，
+ * 也无需改动上游自动生成的大量词库源文件。
  */
-export const ALL_WORDS: Word[] = [...cefrMerged, ...pepOnlyUnique, ...idiomsWithGrade]
+export const ALL_WORDS: Word[] = [...cefrMerged, ...pepOnlyUnique, ...idiomsWithGrade].map((w) => ({
+  ...w,
+  examples: positiveExamples(w.examples),
+}))
 
 /* ----------------------------- 场景分组 ----------------------------- */
 

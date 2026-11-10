@@ -269,3 +269,9 @@ export const EditIcon = (p: P) => (
     <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 )
+
+export const BoltIcon = (p: P) => (
+  <svg {...base(p)}>
+    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+  </svg>
+)

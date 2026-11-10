@@ -90,6 +90,208 @@ function playViaWebAudio(
     })
 }
 
+/* ------------------------------------------------------------------ */
+/* 预合成缓存：把「点一下 → 现场推理 → 出声」改成「先备好音频 → 秒播」  */
+/* 同一句重复朗读 / 后台预取命中时不再等待 Piper WASM 推理。            */
+/* ------------------------------------------------------------------ */
+export interface PreparedSpeech {
+  blob: Blob
+  /** wav 媒体时长（秒）；0 表示头部解析失败，由上层估算 */
+  duration: number
+}
+
+const preparedCache = new Map<string, PreparedSpeech>()
+const pendingSynth = new Map<string, Promise<PreparedSpeech | null>>()
+/** Piper WASM 会话不能并发 predict，所有合成串行排队 */
+let synthChain: Promise<unknown> = Promise.resolve()
+
+const synthKey = (text: string, lang: 'en' | 'zh') => `${lang}\u0000${text}`
+
+function enqueueSynth<T>(job: () => Promise<T>): Promise<T> {
+  const p = synthChain.then(job, job)
+  synthChain = p.catch(() => {})
+  return p
+}
+
+/** 从 wav 头取真实时长，用于进度条与总时长显示（不依赖 loadedmetadata 异步事件）。 */
+async function wavDuration(blob: Blob): Promise<number> {
+  try {
+    const head = new DataView(await blob.slice(0, 4096).arrayBuffer())
+    if (head.byteLength < 44) return 0
+    const tag = (o: number) =>
+      String.fromCharCode(head.getUint8(o), head.getUint8(o + 1), head.getUint8(o + 2), head.getUint8(o + 3))
+    if (tag(0) !== 'RIFF' || tag(8) !== 'WAVE') return 0
+    let off = 12
+    let byteRate = 0
+    let dataSize = 0
+    while (off + 8 <= head.byteLength) {
+      const id = tag(off)
+      const size = head.getUint32(off + 4, true)
+      if (id === 'fmt ') byteRate = head.getUint32(off + 16, true)
+      if (id === 'data') { dataSize = size; break }
+      if (size <= 0) break
+      off += 8 + size
+    }
+    return byteRate > 0 && dataSize > 0 ? dataSize / byteRate : 0
+  } catch {
+    return 0
+  }
+}
+
+/** 模块级会话准备：预合成与 speak 共用，不依赖任何 React 实例。 */
+async function ensureSessionReady(lang: 'en' | 'zh'): Promise<any> {
+  if (!sessionShared?.ready) {
+    if (_status === 'error') {
+      _status = 'idle'
+      emit('idle')
+    }
+    if (_status === 'downloading' && initPromiseShared) await initPromiseShared
+    else await downloadModel()
+  }
+  if (lang === 'en') return sessionShared
+  if (!sessionZh?.ready) {
+    emitProgress(50, '加载中文语音模型…')
+    await initChineseSession()
+  }
+  return sessionZh
+}
+
+async function predictWithTimeout(session: any, text: string): Promise<Blob> {
+  let timer: number | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error('predict-timeout(8s)')), 8000)
+  })
+  try {
+    return await Promise.race<Blob>([session.predict(text), timeout])
+  } finally {
+    if (timer !== undefined) window.clearTimeout(timer)
+  }
+}
+
+/** 后台预合成一句并缓存；浏览器环境（走系统 TTS）返回 null。 */
+export function prepareSpeech(text: string, lang: 'en' | 'zh' = 'en'): Promise<PreparedSpeech | null> {
+  const clean = text.trim()
+  if (!clean || !isCapacitor) return Promise.resolve(null)
+  const key = synthKey(clean, lang)
+  const cached = preparedCache.get(key)
+  if (cached) return Promise.resolve(cached)
+  const pending = pendingSynth.get(key)
+  if (pending) return pending
+  const p = enqueueSynth(async () => {
+    try {
+      const session = await ensureSessionReady(lang)
+      if (!session?.ready) throw new Error('TtsSession not ready')
+      const blob = await predictWithTimeout(session, clean)
+      const item: PreparedSpeech = { blob, duration: await wavDuration(blob) }
+      preparedCache.set(key, item)
+      return item
+    } catch (err) {
+      console.error('Piper 预合成失败:', err)
+      return null
+    } finally {
+      pendingSynth.delete(key)
+    }
+  })
+  pendingSynth.set(key, p)
+  return p
+}
+
+/** 同步查缓存：让队列可以判断这句是否已经能「秒播」。 */
+export function peekPrepared(text: string, lang: 'en' | 'zh' = 'en'): PreparedSpeech | null {
+  return preparedCache.get(synthKey(text.trim(), lang)) ?? null
+}
+
+/** 倍速即时生效，不打断当前播放。 */
+/** 当前音频的进度心跳，模块级唯一：stop / 换句时必须清掉，避免连播堆积定时器。 */
+let progressTick: number | null = null
+
+function clearProgressTick(): void {
+  if (progressTick !== null) {
+    window.clearInterval(progressTick)
+    progressTick = null
+  }
+}
+
+export function setPlaybackRate(rate: number): void {
+  if (audioSharedHtml) audioSharedHtml.playbackRate = rate
+  if (audioShared) {
+    try { audioShared.playbackRate.value = rate } catch { /* noop */ }
+  }
+}
+
+function stopCurrentAudio(): void {
+  clearProgressTick()
+  if (audioSharedHtml) {
+    const el = audioSharedHtml
+    audioSharedHtml = null
+    el.onended = null
+    el.onerror = null
+    try {
+      el.pause()
+      if (el.src.startsWith('blob:')) URL.revokeObjectURL(el.src)
+    } catch { /* noop */ }
+  }
+  if (audioShared) {
+    const src = audioShared
+    audioShared = null
+    src.onended = null
+    try { src.stop() } catch { /* noop */ }
+    try { src.disconnect() } catch { /* noop */ }
+  }
+}
+
+/** 播放已备好的 wav：不再有任何 await，调用即出声。 */
+export function playPrepared(
+  prepared: PreparedSpeech,
+  rate: number,
+  onEnded?: () => void,
+  onProgress?: (current: number, duration: number) => void,
+  startAt = 0,
+): void {
+  stopCurrentAudio()
+  const url = URL.createObjectURL(prepared.blob)
+  const audio = new Audio(url)
+  audio.playbackRate = rate
+  audioSharedHtml = audio
+
+  let ended = false
+  const cleanup = () => {
+    if (ended) return
+    ended = true
+    clearProgressTick()
+    emitSpeaking(false)
+    try { URL.revokeObjectURL(url) } catch { /* noop */ }
+    if (audioSharedHtml === audio) audioSharedHtml = null
+    onEnded?.()
+  }
+  audio.onended = cleanup
+
+  let webAudioTried = false
+  const tryWebAudio = () => {
+    if (webAudioTried) return
+    webAudioTried = true
+    clearProgressTick()
+    playViaWebAudio(prepared.blob, rate, reqIdShared, onEnded, emitSpeaking, url)
+  }
+  audio.onerror = () => tryWebAudio()
+
+  if (startAt > 0) {
+    audio.addEventListener('loadedmetadata', () => {
+      try { audio.currentTime = Math.min(startAt, prepared.duration || startAt) } catch { /* noop */ }
+    }, { once: true })
+  }
+
+  emitSpeaking(true)
+  clearProgressTick()
+  progressTick = window.setInterval(() => {
+    if (ended || audio.paused) return
+    onProgress?.(audio.currentTime, audio.duration || prepared.duration)
+  }, 150)
+
+  const p = audio.play()
+  if (p && typeof p.catch === 'function') p.catch(() => tryWebAudio())
+}
+
 // 运行环境判断：APK（Capacitor）用 Piper 离线模型；浏览器用原生 SpeechSynthesis。
 const isCapacitor =
   typeof window !== 'undefined' && (window as any).Capacitor !== undefined
@@ -125,7 +327,7 @@ function onProgressChange(fn: (p: { pct: number; label: string }) => void) {
 
 /**
  * 中文模型按需加载：只在第一次朗读中文时创建另一个会话。
- * 冷启动因此只需下载英文模型（约 60MB），而不是一次性拉两个模型。
+ * 冷启动因此只需初始化内置的英文模型，而不是一次性加载两个模型。
  */
 async function initChineseSession(): Promise<void> {
   if (sessionZh?.ready) return
@@ -198,7 +400,7 @@ export async function downloadModel(): Promise<void> {
       emitProgress(100, '完成')
       emit('ready')
     } catch (err) {
-      console.error('Piper TTS download failed:', err)
+      console.error('Piper TTS 内置模型初始化失败:', err)
       emit('error')
       initPromiseShared = null
       sessionShared = null
@@ -226,7 +428,6 @@ export function useSpeech() {
   // 不需要进任何 useCallback 的依赖数组）。
   const [speaking, setSpeakingState] = useState(_speaking)
   const setSpeaking = emitSpeaking
-  const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState<DownloadStatus>(_status)
   const [progress, setProgress] = useState<{ pct: number; label: string }>({
     pct: _progress,
@@ -310,45 +511,17 @@ export function useSpeech() {
     [],
   )
 
-  // 冷启动只备好英文会话；中文会话在首次中文朗读时按需创建。
-  const ensureSession = useCallback(async (lang: 'en' | 'zh' = 'en') => {
-    if (!sessionShared?.ready) {
-      if (_status === 'error') {
-        _status = 'idle'
-        emit('idle')
-      }
-      setLoading(true)
-      try {
-        if (_status === 'downloading' && initPromiseShared) await initPromiseShared
-        else await downloadModel()
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error('Piper 初始化失败:', err)
-        throw new Error('Piper init failed: ' + msg)
-      } finally {
-        setLoading(false)
-      }
-    }
-    if (lang === 'en') return sessionShared!
-
-    if (!sessionZh?.ready) {
-      setLoading(true)
-      try {
-        emitProgress(50, '加载中文语音模型…')
-        await initChineseSession()
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error('中文 Piper 初始化失败:', err)
-        throw new Error('Piper init failed: ' + msg)
-      } finally {
-        setLoading(false)
-      }
-    }
-    return sessionZh!
-  }, [])
+  // loading 直接由共享的下载状态派生：预合成在模块级进行，不依赖某个 React 实例。
+  const loading = status === 'downloading'
 
   const speak = useCallback(
-    async (text: string, rate = 0.9, onEnded?: () => void, lang: 'en' | 'zh' = 'en') => {
+    async (
+      text: string,
+      rate = 0.9,
+      onEnded?: () => void,
+      lang: 'en' | 'zh' = 'en',
+      opts?: { startAt?: number; onProgress?: (current: number, duration: number) => void },
+    ) => {
       if (!text) return
 
       // ── 浏览器环境：直接用原生 SpeechSynthesis，不加载模型、不联网 ──
@@ -389,154 +562,36 @@ export function useSpeech() {
       }
 
       // ── APK 环境：Piper 离线模型（中+英两个 medium） ──
-      // Stop currently playing audio
-      if (audioSharedHtml) {
-        try {
-          audioSharedHtml.pause()
-          if (audioSharedHtml.src.startsWith('blob:')) URL.revokeObjectURL(audioSharedHtml.src)
-        } catch {
-          /* noop */
-        }
-        audioSharedHtml = null
-      }
-      if (audioShared) {
-        try {
-          audioShared.stop()
-        } catch {
-          /* noop */
-        }
-        try {
-          audioShared.disconnect()
-        } catch {
-          /* noop */
-        }
-        audioShared = null
-      }
-
+      // 先停掉上一条；合成走统一缓存，命中时不再等待 WASM 推理。
+      stopCurrentAudio()
       const id = ++reqIdShared
-
       try {
-        const session = await ensureSession(lang)
-        if (!session) {
-          console.error('ensureSession 返回空 session')
-          setSpeaking(false)
-          return
-        }
-        // 等待模型期间可能已被 stop() / 新的一句取代
+        const prepared = await prepareSpeech(text, lang)
+        // 等待合成期间可能已被 stop() / 新的一句取代
         if (id !== reqIdShared) return
-
-        setSpeaking(true)
-        let audioBlob: Blob
-        try {
-          // 超时保护：Piper phonemize wasm 在部分 WebView 下会永久挂起（既不 resolve 也不 reject）。
-          // 超时后回退到系统 TTS，保证至少能出声。
-          let timeoutId: number | undefined
-          const timeout = new Promise<Blob>((_, reject) => {
-            timeoutId = window.setTimeout(() => reject(new Error('predict-timeout(8s)')), 8000)
-          })
-          try {
-            audioBlob = await Promise.race<Blob>([session.predict(text), timeout])
-          } finally {
-            // 原先每次朗读都会残留一个 8s 定时器，连播时会不断堆积。
-            if (timeoutId !== undefined) window.clearTimeout(timeoutId)
-          }
-        } catch (pe) {
-          if (id !== reqIdShared) return
-          const pm = pe instanceof Error ? pe.message : String(pe)
-          console.error('Piper predict failed, fallback to system TTS:', pe, pm)
-          setSpeaking(false)
-          // 回退：用 WebView 内置系统语音合成（不需要模型、不需要联网）
+        if (!prepared) {
           fallbackSpeechSynthesis(text, rate, onEnded, lang)
           return
         }
-
-        if (id !== reqIdShared) return
-
-        // 主路径：<audio> 元素播放 blob wav（真机此前验证可正常出声）。
-        // WebView 对 blob:wav 的 <audio> 支持稳定，且点击手势内 play() 不受自动播放限制。
-        const url = URL.createObjectURL(audioBlob)
-        const audio = new Audio(url)
-        audio.playbackRate = rate
-        // 用 HTMLAudioElement 持有，stop() 时 pause+revoke
-        audioSharedHtml = audio
-
-        let ended = false
-        const cleanup = () => {
-          if (ended) return
-          ended = true
-          setSpeaking(false)
-          try {
-            URL.revokeObjectURL(url)
-          } catch {
-            /* noop */
-          }
-          audioSharedHtml = null
-          onEnded?.()
-        }
-        audio.onended = cleanup
-        // <audio> 失败与 play() 被拒绝都可能触发回退；用标志防重入，避免双次播放。
-        let webAudioTried = false
-        const tryWebAudio = () => {
-          if (webAudioTried) return
-          webAudioTried = true
-          playViaWebAudio(audioBlob, rate, id, onEnded, setSpeaking, url)
-        }
-        audio.onerror = () => {
-          // <audio> 失败时回退 Web Audio（decodeAudioData + bufferSource）
-          console.warn('HTMLAudio onerror（blob 无法播放，可能 WebView 不支持 blob:wav）', url)
-          tryWebAudio()
-        }
-        const p = audio.play()
-        if (p && typeof p.catch === 'function') {
-          p.catch((e) => {
-            // play() 被拒绝（如自动播放策略）：尝试 Web Audio 兜底
-            console.warn(`HTMLAudio play() 被拒绝: ${String(e)}`)
-            tryWebAudio()
-          })
-        }
+        playPrepared(prepared, rate, onEnded, opts?.onProgress, opts?.startAt ?? 0)
       } catch (err) {
         if (id !== reqIdShared) return
         console.error('Piper TTS speak failed:', err)
         setSpeaking(false)
-        // ensureSession/downloadModel 失败（模型未就绪且重试失败）：回退系统 TTS，保证至少能出声。
         fallbackSpeechSynthesis(text, rate, onEnded, lang)
       }
     },
-    [ensureSession, fallbackSpeechSynthesis],
+    [fallbackSpeechSynthesis],
   )
 
   const stop = useCallback(() => {
-    // 使所有在途 speak（仍在等模型/合成）失效，避免停止后又冒出上一句
+    // 使所有在途 speak（仍在等合成）失效，避免停止后又冒出上一句。
+    // 注意：后台预合成不受影响，它只写缓存，不播放。
     reqIdShared += 1
-    // 无论是否已有音频节点，都要复位共享状态：模型加载 / predict 在途时两个节点都还是 null。
     emitSpeaking(false)
-    // Piper 超时会回退到系统 TTS，此时也必须能停掉。
     if (synthAvailable) window.speechSynthesis.cancel()
     if (!isCapacitor) return
-    if (audioSharedHtml) {
-      try {
-        audioSharedHtml.pause()
-        if (audioSharedHtml.src.startsWith('blob:')) URL.revokeObjectURL(audioSharedHtml.src)
-      } catch {
-        /* noop */
-      }
-      audioSharedHtml = null
-      setSpeaking(false)
-    }
-    if (audioShared) {
-      try {
-        audioShared.stop()
-      } catch {
-        /* noop */
-      }
-      try {
-        audioShared.disconnect()
-      } catch {
-        /* noop */
-      }
-      audioShared = null
-      setSpeaking(false)
-    }
+    stopCurrentAudio()
   }, [])
 
   // 产品目标为 APK；非 Capacitor 仅用于本地 vite 预览，走系统 TTS，视为永久 ready。

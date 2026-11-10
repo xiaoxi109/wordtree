@@ -227,7 +227,8 @@ export function WordCard({
             {word.meaning}
           </span>
         )}
-        {showEn && <SpeakerBtn text={word.word} iconSize={16} className="-mr-1 shrink-0" />}
+        {/* 发音按钮常驻：中文模式下也保留，点击才读英文，不主动暴露词形 */}
+        <SpeakerBtn text={word.word} iconSize={16} className="-mr-1 shrink-0" />
       </div>
       {showEn && <span className="relative text-[11px] text-slate-400 dark:text-slate-500">{word.ipa}</span>}
       {showZh && (

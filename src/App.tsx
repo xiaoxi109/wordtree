@@ -3,13 +3,14 @@ import { Capacitor } from '@capacitor/core'
 import { StatusBar, Style } from '@capacitor/status-bar'
 import { App as CapApp } from '@capacitor/app'
 import { runBack } from './lib/back'
-import { LEVELS } from './data'
+import { LEVELS, ALL_WORDS } from './data'
 import type { Level, Word } from './data'
 import { GRADES, type GradeId } from './data/grades'
 import {
   DEFAULT_GRADE,
   DEFAULT_LEVEL,
   activeLevels,
+  activeGrades,
   gradeToLevel,
   type Route,
   type GradeRung,
@@ -19,32 +20,38 @@ import { useSpeech } from './hooks/useSpeech'
 import HomeDashboard from './views/HomeDashboard'
 import BrowseView from './views/BrowseView'
 import GradeView from './views/GradeView'
-import SettingsView, { LlmSettingsView } from './views/SettingsView'
+import SettingsView, { LlmSettingsView, RungPickerView } from './views/SettingsView'
 import StudyView from './views/StudyView'
+import SentenceView from './views/SentenceView'
 import AiView from './views/AiView'
+import ChallengesView from './views/ChallengesView'
 import { WordModal } from './components/word'
 import { AdvancementQuiz } from './components/AdvancementQuiz'
 import { checkAdvancement } from './lib/advancement'
 import { ArrowLeftIcon, HomeIcon, SparklesIcon, UserIcon, CheckIcon, XIcon } from './components/icons'
+import { PageActiveContext } from './components/Sheet'
 
 type View = 'home' | 'ai' | 'me'
 type Theme = 'light' | 'dark'
 
 /**
  * 全局页面栈只承载全屏沉浸式二级页：
- * 大模型设置、等级词表、年级词表、搜索、AI 课程阅读、闯关晋级、
+ * 大模型设置、我的等级、等级词表、年级词表、搜索、AI 课程阅读、闯关晋级、
  * 背词浏览（BrowseView 全场景）、复习（StudyView）。
  * 生成条件 / 课程集操作等轻量交互用底部 Sheet / ActionSheet，不进栈。
  */
 type Page =
   | { kind: 'llm' }
+  | { kind: 'rung' }
   | { kind: 'search' }
   | { kind: 'level'; level: Level }
   | { kind: 'grade'; grade: GradeId }
   | { kind: 'browse-all' }
   | { kind: 'study' }
+  | { kind: 'sentences' }
   | { kind: 'ai-reader'; lessonId: string }
   | { kind: 'quiz' }
+  | { kind: 'challenge' }
 
 /**
  * AI 课程在 Web 与原生端都开放；Web 端能否请求成功取决于接口是否允许跨域，
@@ -56,31 +63,31 @@ const AI_ENABLED = true
 type Toast = { id: number; msg: string; type: 'success' | 'error' | 'info' }
 let toastId = 0
 
-function ToastContainer({ toasts, offset = '12px' }: { toasts: Toast[]; offset?: string }) {
+function ToastContainer({ toasts, bottomOffset = '24px' }: { toasts: Toast[]; bottomOffset?: string }) {
   return (
     <div
       className="pointer-events-none fixed inset-x-0 z-[60] flex flex-col items-center gap-2 px-4"
-      style={{ top: `calc(env(safe-area-inset-top) + ${offset})` }}
+      style={{ bottom: `calc(env(safe-area-inset-bottom) + ${bottomOffset})` }}
     >
       {toasts.map((t) => (
         <div
           key={t.id}
-          className="pointer-events-auto flex max-w-sm animate-toast-in items-center gap-2.5 rounded-[18px] border border-white/10 bg-slate-900/95 px-4 py-3 text-sm font-medium text-white shadow-float backdrop-blur-xl dark:bg-slate-800/95"
+          className="pointer-events-auto flex max-w-[300px] animate-toast-in items-center gap-2 rounded-[14px] border border-slate-200/70 bg-white/95 px-3 py-2 text-xs font-semibold leading-snug text-slate-700 shadow-card backdrop-blur-xl dark:border-slate-700/60 dark:bg-slate-800/95 dark:text-slate-100"
         >
           <span
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${
+            className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
               t.type === 'success'
-                ? 'bg-accent-lime/20 text-accent-lime'
+                ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
                 : t.type === 'error'
-                  ? 'bg-rose-400/20 text-rose-300'
-                  : 'bg-white/10 text-white'
+                  ? 'bg-rose-50 text-rose-600 dark:bg-rose-500/15 dark:text-rose-300'
+                  : 'bg-slate-100 text-slate-500 dark:bg-slate-700/60 dark:text-slate-300'
             }`}
           >
-            {t.type === 'success' && <CheckIcon width={14} height={14} />}
-            {t.type === 'error' && <XIcon width={14} height={14} />}
-            {t.type === 'info' && <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+            {t.type === 'success' && <CheckIcon width={11} height={11} />}
+            {t.type === 'error' && <XIcon width={11} height={11} />}
+            {t.type === 'info' && <span className="h-1 w-1 rounded-full bg-current" />}
           </span>
-          <span className="min-w-0">{t.msg}</span>
+          <span className="min-w-0 break-words">{t.msg}</span>
         </div>
       ))}
     </div>
@@ -309,6 +316,15 @@ export default function App() {
     [route, currentRung],
   )
 
+  // 当前激活窗口内的词（闯关游戏的可练习词池）。
+  const activeWords = useMemo(() => {
+    const grades = activeGrades(route, currentRung)
+    return ALL_WORDS.filter((w) => {
+      if (route === 'level') return activeLevelsList.includes(w.level)
+      return !!(w.grade && grades.includes(w.grade))
+    })
+  }, [route, activeLevelsList, currentRung])
+
   /** 晋级检测：当前激活窗口内全部掌握 + 有下一级可去 */
   const advancement = useMemo(
     () => checkAdvancement(route, currentRung, new Set(masteredArr)),
@@ -362,7 +378,9 @@ export default function App() {
     if (!page) return null
     switch (page.kind) {
       case 'llm':
-        return { title: '大模型设置', sub: 'OpenAI 兼容接口 · Key 不出设备' }
+        return { title: '大模型设置', sub: '' }
+      case 'rung':
+        return { title: '我的等级', sub: '' }
       case 'search':
         return { title: '搜索单词', sub: '全部分级词库' }
       case 'level': {
@@ -377,10 +395,14 @@ export default function App() {
         return { title: '全部词库', sub: '按场景分组 · 可叠加等级 / 词性筛选' }
       case 'study':
         return { title: '复习', sub: '间隔重复队列 · 到期即练' }
+      case 'sentences':
+        return { title: '短句', sub: '按使用场景分类 · 中文想，英文说' }
       case 'ai-reader':
-        return { title: '课程阅读', sub: '点或长按单词查词，读完自动记录' }
+        return { title: '课程阅读', sub: '' }
       case 'quiz':
         return { title: '晋级闯关', sub: '抽检当前级单词 · 通过可晋级' }
+      case 'challenge':
+        return { title: '闯关', sub: '' }
     }
   }, [pages])
 
@@ -388,6 +410,15 @@ export default function App() {
     switch (page.kind) {
       case 'llm':
         return <LlmSettingsView onToast={pushToast} />
+      case 'rung':
+        return (
+          <RungPickerView
+            route={route}
+            currentRung={currentRung}
+            setCurrentRung={setCurrentRung}
+            onDone={popPage}
+          />
+        )
       case 'search':
         return (
           <BrowseView
@@ -419,6 +450,8 @@ export default function App() {
             active={pages[pages.length - 1]?.kind === 'study'}
           />
         )
+      case 'sentences':
+        return <SentenceView active={pages[pages.length - 1]?.kind === 'sentences'} />
       case 'level':
         return (
           <BrowseView
@@ -461,6 +494,13 @@ export default function App() {
             onCancel={popPage}
           />
         )
+      case 'challenge':
+        return (
+          <ChallengesView
+            activeWords={activeWords}
+            onExit={popPage}
+          />
+        )
     }
   }
 
@@ -476,7 +516,9 @@ export default function App() {
         } ${
           pages[pages.length - 1]?.kind === 'study'
             ? 'pb-[env(safe-area-inset-bottom)]'
-            : 'pb-[calc(env(safe-area-inset-bottom)+78px)]'
+            : pages[pages.length - 1]?.kind === 'ai-reader'
+              ? 'pb-0'
+              : 'pb-[calc(env(safe-area-inset-bottom)+78px)]'
         }`}
       >
         {/* 二级 / 三级页面：顶部返回栏 fixed 吸顶，搜索/筛选 FilterBar 接着吸在下方 */}
@@ -493,7 +535,9 @@ export default function App() {
                   <h1 className="truncate text-[16px] font-bold tracking-tight text-slate-900 dark:text-slate-50">
                     {pageMeta.title}
                   </h1>
-                  <p className="mt-0.5 truncate text-[11px] text-slate-400">{pageMeta.sub}</p>
+                  {pageMeta.sub ? (
+                    <p className="mt-0.5 truncate text-[11px] text-slate-400">{pageMeta.sub}</p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -502,6 +546,7 @@ export default function App() {
 
         {/* 三个主页面首次进入后常驻（hidden 切换）：保留筛选、滚动与 AI 生成进度 */}
         <div className={pageMeta && !aiPageOpen ? 'hidden' : ''}>
+          <PageActiveContext.Provider value={view === 'home' && !(pageMeta && !aiPageOpen)}>
           <div className={view === 'home' ? '' : 'hidden'} aria-hidden={view !== 'home'}>
             {visited.has('home') && (
               <HomeDashboard
@@ -512,14 +557,18 @@ export default function App() {
                 activeLevels={activeLevelsList}
                 canAdvance={advancement.canAdvance}
                 onOpenBrowse={() => pushPage({ kind: 'browse-all' })}
+                onOpenSentences={() => pushPage({ kind: 'sentences' })}
                 onOpenStudy={() => pushPage({ kind: 'study' })}
                 onOpenSearch={() => pushPage({ kind: 'search' })}
                 onStartQuiz={() => pushPage({ kind: 'quiz' })}
+                onOpenChallenges={() => pushPage({ kind: 'challenge' })}
                 streak={streak}
               />
             )}
           </div>
+          </PageActiveContext.Provider>
 
+          <PageActiveContext.Provider value={view === 'ai' && !(pageMeta && !aiPageOpen)}>
           <div className={view === 'ai' ? '' : 'hidden'} aria-hidden={view !== 'ai'}>
             {visited.has('ai') && (
               <AiView
@@ -537,7 +586,9 @@ export default function App() {
               />
             )}
           </div>
+          </PageActiveContext.Provider>
 
+          <PageActiveContext.Provider value={view === 'me' && !(pageMeta && !aiPageOpen)}>
           <div className={view === 'me' ? '' : 'hidden'} aria-hidden={view !== 'me'}>
             {visited.has('me') && (
               <SettingsView
@@ -546,12 +597,9 @@ export default function App() {
                 masteredCount={masteredArr.length}
                 onToggleTheme={toggleTheme}
                 onOpenLlm={() => pushPage({ kind: 'llm' })}
+                onOpenRung={() => pushPage({ kind: 'rung' })}
                 onToast={pushToast}
                 onImport={importMastered}
-                onClearProgress={() => {
-                  setMasteredArr([])
-                  setStreak(0)
-                }}
                 route={route}
                 setRoute={setRoute}
                 currentRung={currentRung}
@@ -559,13 +607,16 @@ export default function App() {
               />
             )}
           </div>
+          </PageActiveContext.Provider>
         </div>
 
         {/* 页面栈：只显示栈顶，其余保活（保留筛选与已加载的列表） */}
         {pages.map((page, i) => (
-          <div key={i} className={i === pages.length - 1 ? '' : 'hidden'}>
-            {renderPage(page)}
-          </div>
+          <PageActiveContext.Provider key={i} value={i === pages.length - 1}>
+            <div className={i === pages.length - 1 ? '' : 'hidden'}>
+              {renderPage(page)}
+            </div>
+          </PageActiveContext.Provider>
         ))}
       </main>
 
@@ -600,7 +651,7 @@ export default function App() {
         />
       )}
 
-      <ToastContainer toasts={toasts} />
+      <ToastContainer toasts={toasts} bottomOffset={pageMeta ? '24px' : '78px'} />
 
     </div>
   )

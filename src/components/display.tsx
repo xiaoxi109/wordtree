@@ -91,7 +91,7 @@ export function DisplayModeToggle({
             title={o.title}
             aria-pressed={active}
             onClick={() => onChange(o.id)}
-            className={`whitespace-nowrap rounded-full px-3 py-1.5 text-[12px] font-semibold transition ${
+            className={`whitespace-nowrap rounded-full px-2 py-1 text-[11px] font-semibold transition ${
               active
                 ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'

@@ -10,24 +10,61 @@ import {
   type LessonWord,
   type WordMarkState,
 } from '../db'
+import { ALL_WORDS, type Word } from '../data'
 import { buildWordIndex, stripWTags, textTokens } from '../lib/parse'
+import { posShort } from '../lib/pos'
+import { sceneLabelText, wordKey } from '../lib/cluster'
 import { formatMeta } from '../lib/prompt'
+import { GradeBadge, LevelBadge, SpeakerBtn } from '../components/word'
 import { lookupWord } from '../lib/dict'
 import { pushReviewWord, removeReviewWord } from '../lib/review'
 import { appendWordEvent } from '../lib/events'
 import { useSpeech } from '../hooks/useSpeech'
+import { useSpeechQueue, type QueueLine } from '../hooks/useSpeechQueue'
 import { Sheet } from '../components/Sheet'
 import { registerBack } from '../lib/back'
 import {
   CheckIcon,
+  ChevronRightIcon,
   EyeIcon,
   EyeOffIcon,
+  PauseIcon,
   PlayIcon,
+  RotateCcwIcon,
+  SkipBackIcon,
+  SkipForwardIcon,
   SpeakerIcon,
   SpinnerIcon,
 } from '../components/icons'
 
-const RATE = 0.9
+const RATES = [0.8, 0.9, 1.0, 1.2, 1.5]
+
+const fmtTime = (sec: number) => {
+  const s = Math.max(0, Math.floor(Number.isFinite(sec) ? sec : 0))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/** 一段长文拆成短句：单句合成更快（首句秒出声），进度条也有足够多的刻度。 */
+function splitSentences(text: string): string[] {
+  return stripWTags(text)
+    .replace(/([.!?])([ \t]+)/g, '$1\n')
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/** 词键 → 完整词条（含例句），点词弹层用它展示背词详情同款内容。 */
+let fullWordMapCache: Map<string, Word> | null = null
+function fullWordMap(): Map<string, Word> {
+  if (fullWordMapCache) return fullWordMapCache
+  const m = new Map<string, Word>()
+  for (const w of ALL_WORDS) m.set(wordKey(w.word), w)
+  fullWordMapCache = m
+  return m
+}
+
+/** 例句里的英文词都能点，不依赖本篇重点词表。 */
+const EMPTY_WORD_INDEX = new Map<string, string>()
 
 interface WordTarget {
   text: string
@@ -56,9 +93,38 @@ export default function LessonReader({
   const [words, setWords] = useState<LessonWord[]>([])
   const [marks, setMarks] = useState<Record<string, WordMarkState>>({})
   const [showZh, setShowZh] = useState(true)
-  const [target, setTarget] = useState<WordTarget | null>(null)
+  /** 点词栈：从例句里继续点词会压栈，弹层顶部可「返回上一个词」。 */
+  const [wordStack, setWordStack] = useState<WordTarget[]>([])
+  const target = wordStack[wordStack.length - 1] ?? null
+  const [rateOpen, setRateOpen] = useState(false)
+  const rateMenuRef = useRef<HTMLDivElement>(null)
 
   const { speak, stop } = useSpeech()
+
+  // 点播放器其它区域 / 页面空白处收起倍速下拉
+  useEffect(() => {
+    if (!rateOpen) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (rateMenuRef.current && !rateMenuRef.current.contains(e.target as Node)) setRateOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [rateOpen])
+
+  // 连续朗读队列：长段落拆成短句，底部播放器按「媒体秒」显示连续进度。
+  const { lines, segmentStarts } = useMemo(() => {
+    const items: QueueLine[] = []
+    const starts: number[] = []
+    segments.forEach((seg, si) => {
+      starts.push(items.length)
+      const parts = splitSentences(seg.en)
+      const safe = parts.length ? parts : [stripWTags(seg.en).trim()].filter(Boolean)
+      safe.forEach((en, pi) => items.push({ id: `${lessonId}-${si}-${pi}`, en, speaker: seg.speaker }))
+    })
+    return { lines: items, segmentStarts: starts }
+  }, [segments, lessonId])
+  // 阅读页只朗读英文：不加载中文模型、不在播放器里放「中文朗读」开关。
+  const queue = useSpeechQueue(lines, { includeZh: false })
 
   // 载入
   useEffect(() => {
@@ -116,9 +182,12 @@ export default function LessonReader({
     return registerBack(() => onBackRef.current())
   }, [active])
 
-  // ========= 查词弹层 =========
-  const openWord = (text: string, key: string | null) => setTarget({ text, key })
-  const closeWord = () => setTarget(null)
+  // ========= 查词弹层（支持例句逐层深入） =========
+  const openWord = (text: string, key: string | null) => setWordStack([{ text, key }])
+  const closeWord = () => setWordStack([])
+  const pushWord = (text: string, key: string | null) =>
+    setWordStack((prev) => [...prev, { text, key }])
+  const popWord = () => setWordStack((prev) => prev.slice(0, -1))
 
   // ========= 三态标记 =========
   const applyMark = async (state: WordMarkState) => {
@@ -162,6 +231,36 @@ export default function LessonReader({
     if (!target) return null
     return lookupWord(target.text)
   }, [target])
+
+  /** 完整词条：有例句、等级、词性，供弹层按「背词详情」的方式展示。 */
+  const detailWord = useMemo<Word | null>(() => {
+    if (!dictEntry) return null
+    const map = fullWordMap()
+    return map.get(dictEntry.key) ?? map.get(wordKey(dictEntry.word)) ?? null
+  }, [dictEntry])
+
+  /** 例句里的每个英文词都可点：命中词典就压栈，实现逐层深入查词。 */
+  const renderExampleNodes = (en: string) =>
+    textTokens(en, EMPTY_WORD_INDEX).map((n, i) =>
+      n.isWord ? (
+        <button
+          key={i}
+          type="button"
+          onClick={() => {
+            const hit = lookupWord(n.text)
+            if (!hit) return
+            const key = wordIndex.get(n.text.toLowerCase()) ?? wordIndex.get(wordKey(n.text)) ?? null
+            pushWord(n.text, key)
+          }}
+          className="rounded px-0.5 text-brand-700 underline decoration-brand-300 decoration-dotted underline-offset-2 transition hover:bg-brand-100 active:bg-brand-500/25 dark:text-brand-300 dark:decoration-brand-500/60 dark:hover:bg-brand-500/20"
+          title="点词查卡"
+        >
+          {n.text}
+        </button>
+      ) : (
+        <span key={i}>{n.text}</span>
+      ),
+    )
 
   // ========= 长按查词 =========
   const pressTimer = useRef<number | null>(null)
@@ -241,9 +340,9 @@ export default function LessonReader({
       ),
     )
 
-  const segmentPlay = (seg: LessonSegment, extra = '') => (
+  const segmentPlay = (index: number, extra = '') => (
     <button
-      onClick={() => speak(stripWTags(seg.en), RATE)}
+      onClick={() => queue.playFrom(segmentStarts[index] ?? index)}
       className={`shrink-0 rounded-full p-1.5 text-brand-600 transition hover:bg-brand-50 dark:text-brand-300 dark:hover:bg-brand-500/10 ${extra}`}
       aria-label="朗读这句"
     >
@@ -260,18 +359,25 @@ export default function LessonReader({
               <span className="rounded-md bg-brand-50 px-1.5 py-0.5 text-[11px] font-bold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
                 {seg.speaker || (i % 2 === 0 ? 'A' : 'B')}
               </span>
-              <div className="ml-auto">{segmentPlay(seg)}</div>
+              <div className="ml-auto">{segmentPlay(i)}</div>
             </div>
             <p className="text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">{renderNodes(seg.en)}</p>
+            {showZh && seg.zh && <p className="mt-1 text-xs leading-relaxed text-slate-400">{seg.zh}</p>}
           </div>
         ))}
       </div>
     )
     if (lesson.kind === 'poem') return (
-      <div className="my-5 space-y-5 text-center font-display">
+      // 小诗与其它体裁同一套布局：每段一行 + 右侧逐句播放按钮
+      <div className="space-y-4 font-display">
         {segments.map((seg, i) => (
           <div key={i}>
-            <p className="text-[17px] italic leading-8 text-slate-800 dark:text-slate-100">{renderNodes(seg.en)}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="flex-1 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
+                {renderNodes(seg.en)}
+              </p>
+              {segmentPlay(i, 'mt-0.5')}
+            </div>
             {showZh && seg.zh && <p className="mt-1 text-xs leading-relaxed text-slate-400">{seg.zh}</p>}
           </div>
         ))}
@@ -279,17 +385,16 @@ export default function LessonReader({
     )
     if (lesson.kind === 'email') return (
       <div className="surface-inset p-4 font-display">
-        <div className="mb-3 border-b hairline pb-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Subject</p>
-          <p className="text-sm font-bold text-slate-700 dark:text-slate-200">{lesson.title}</p>
-        </div>
         <div className="space-y-3">
           {segments.map((seg, i) => (
-            <div key={i} className="flex items-start justify-between gap-2">
-              <p className="flex-1 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
-                {renderNodes(seg.en)}
-              </p>
-              {segmentPlay(seg, 'mt-0.5')}
+            <div key={i}>
+              <div className="flex items-start justify-between gap-2">
+                <p className="flex-1 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
+                  {renderNodes(seg.en)}
+                </p>
+                {segmentPlay(i, 'mt-0.5')}
+              </div>
+              {showZh && seg.zh && <p className="mt-1 text-xs leading-relaxed text-slate-400">{seg.zh}</p>}
             </div>
           ))}
         </div>
@@ -299,11 +404,14 @@ export default function LessonReader({
       <div className="rounded-[18px] border-l-[3px] border-amber-300 bg-amber-50/50 p-4 font-display dark:border-amber-500/40 dark:bg-amber-500/5">
         <div className="space-y-3">
           {segments.map((seg, i) => (
-            <div key={i} className="flex items-start justify-between gap-2">
-              <p className="flex-1 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
-                {renderNodes(seg.en)}
-              </p>
-              {segmentPlay(seg, 'mt-0.5')}
+            <div key={i}>
+              <div className="flex items-start justify-between gap-2">
+                <p className="flex-1 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
+                  {renderNodes(seg.en)}
+                </p>
+                {segmentPlay(i, 'mt-0.5')}
+              </div>
+              {showZh && seg.zh && <p className="mt-1 text-xs leading-relaxed text-slate-400">{seg.zh}</p>}
             </div>
           ))}
         </div>
@@ -319,7 +427,7 @@ export default function LessonReader({
               }`}>
                 {renderNodes(seg.en)}
               </p>
-              {segmentPlay(seg, 'mt-0.5')}
+              {segmentPlay(i, 'mt-0.5')}
             </div>
             {showZh && seg.zh && <p className="mt-1 text-xs leading-relaxed text-slate-400">{seg.zh}</p>}
           </div>
@@ -335,7 +443,7 @@ export default function LessonReader({
               <p className="flex-1 whitespace-pre-wrap text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
                 {renderNodes(seg.en)}
               </p>
-              {segmentPlay(seg, 'mt-0.5')}
+              {segmentPlay(i, 'mt-0.5')}
             </div>
             {showZh && seg.zh && (
               <p className="mt-1 border-l-2 border-slate-200 pl-2 text-sm text-slate-400 dark:border-slate-700">
@@ -349,14 +457,14 @@ export default function LessonReader({
   }
 
   return (
-    <div>
+    <div className="pb-[calc(env(safe-area-inset-bottom)+104px)]">
       <div className="mb-3 flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${fmt.badge}`}>
               {fmt.emoji} {fmt.label}
             </span>
-            <span className="text-xs text-slate-400">{lesson.scene_label}</span>
+            <span className="text-xs text-slate-400">{sceneLabelText(lesson.scene_label)}</span>
             {lesson.read_at && (
               <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
                 已读
@@ -364,7 +472,7 @@ export default function LessonReader({
             )}
           </div>
           <h2 className="mt-1.5 break-words font-display text-[24px] font-semibold leading-snug text-slate-800 dark:text-slate-100">
-            {lesson.title}
+            {stripWTags(lesson.title)}
           </h2>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-400">
             <span>重点词 {lesson.coverage_total ?? words.length}</span>
@@ -396,7 +504,7 @@ export default function LessonReader({
         {pendingLesson ? (
           <div className="py-8 text-center">
             <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
-              「{lesson.scene_label}」
+              「{sceneLabelText(lesson.scene_label)}」
               {lesson.status === 'generating' ? '正在生成…' : '生成失败'}
             </p>
             {lesson.error && <p className="mt-2 text-xs text-rose-500">{lesson.error}</p>}
@@ -413,59 +521,33 @@ export default function LessonReader({
           </div>
         ) : (
           <>
-            <p className="mb-3 rounded-[14px] bg-slate-900/[0.035] px-3 py-2 text-[11px] text-slate-400 dark:bg-white/5">
-              点或长按正文里任意单词查词；带下划线的是本篇重点词，可直接标记掌握程度。
-            </p>
             {renderBody()}
           </>
         )}
       </div>
 
-      {/* 重点词一览 */}
-      {words.length > 0 && lesson.status === 'ready' && (
-        <>
-          <p className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-400">
-            本篇重点词 · 点击标记
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {words.map((w) => (
-              <button
-                key={w.word_key}
-                type="button"
-                onTouchStart={() => startPress(w.word, w.word_key)}
-                onTouchEnd={endPress}
-                onTouchCancel={endPress}
-                onMouseDown={() => startPress(w.word, w.word_key)}
-                onMouseUp={endPress}
-                onMouseLeave={endPress}
-                onContextMenu={(e) => e.preventDefault()}
-                onClick={() => tapWord(w.word, w.word_key)}
-                className={`inline-flex items-center gap-1 rounded-full border border-transparent px-2.5 py-1 text-xs font-medium transition ${
-                  wordClass(w.word_key)
-                }`}
-              >
-                {w.word}
-                {w.is_review && (
-                  <span className="rounded-full bg-amber-200/70 px-1 text-[10px] font-bold text-amber-800 dark:bg-amber-400/25 dark:text-amber-200">
-                    复习
-                  </span>
-                )}
-                {marks[w.word_key] === 'known' && <CheckIcon width={11} height={11} className="-translate-y-px" />}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-
       {/* 点词弹层 */}
       <Sheet
         open={!!target}
         onClose={closeWord}
-        title={displayWord}
+        title={
+          <span className="flex items-center gap-2.5">
+            <span className="min-w-0 truncate">{displayWord}</span>
+            <button
+              type="button"
+              onClick={() => speak(displayWord, 0.85)}
+              aria-label="朗读"
+              title="朗读"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-700 transition active:scale-95 dark:bg-brand-500/15 dark:text-brand-300"
+            >
+              <SpeakerIcon width={15} height={15} />
+            </button>
+          </span>
+        }
         subtitle={[displayIpa, lemma ? `原形 ${lemma}` : ''].filter(Boolean).join(' · ') || undefined}
         footer={
           target?.key ? (
-            <div>
+            <div className="pb-3">
               <div className="grid grid-cols-3 gap-2">
                 {(['unknown', 'fuzzy', 'known'] as WordMarkState[]).map((state) => {
                   const active = marks[target.key!] === state
@@ -492,7 +574,7 @@ export default function LessonReader({
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-2 gap-2 pb-3">
               <button
                 onClick={addUnknown}
                 className="rounded-[14px] bg-rose-50 py-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-100 active:scale-[0.98] dark:bg-rose-500/15 dark:text-rose-300"
@@ -510,21 +592,35 @@ export default function LessonReader({
         }
       >
         <div className="pb-1">
-          <div className="flex flex-wrap items-center gap-2">
+          {/* 逐层查词：从例句点进来的词可返回上一个词 */}
+          {wordStack.length > 1 && (
             <button
-              onClick={() => speak(displayWord, 0.85)}
-              className="inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-700 transition active:scale-95 dark:bg-brand-500/15 dark:text-brand-300"
+              type="button"
+              onClick={popWord}
+              className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-[12px] font-semibold text-brand-700 transition hover:bg-brand-100 dark:bg-brand-500/10 dark:text-brand-300"
             >
-              <SpeakerIcon width={14} height={14} />
-              朗读
+              <ChevronRightIcon width={14} height={14} className="rotate-180" />
+              返回上一个词
             </button>
-            {target?.key ? (
+          )}
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {detailWord && (detailWord.grade
+              ? <GradeBadge grade={detailWord.grade} />
+              : <LevelBadge level={detailWord.level} />)}
+            {detailWord && posShort(detailWord) && (
+              <span className="rounded-full border border-slate-200/60 bg-white/70 px-2 py-0.5 text-[11px] font-bold text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-300">
+                {posShort(detailWord)}
+              </span>
+            )}
+            {detailWord?.common && (
+              <span className="rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
+                常用词
+              </span>
+            )}
+            {target?.key && (
               <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-semibold text-brand-700 dark:bg-brand-500/15 dark:text-brand-300">
                 本篇重点词
-              </span>
-            ) : (
-              <span className="rounded-full bg-slate-900/5 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-white/10 dark:text-slate-300">
-                文中查词
               </span>
             )}
             {target?.key && reviewKeys.has(target.key) && (
@@ -533,14 +629,44 @@ export default function LessonReader({
               </span>
             )}
           </div>
-          <p className="mt-3 text-[15px] leading-relaxed text-slate-700 dark:text-slate-200">
-            {displayMeaning || '本地词典未收录这个词'}
+
+          <div className="surface-inset mt-3 p-4">
+            <p className="text-[16px] font-semibold leading-relaxed text-slate-800 dark:text-slate-100">
+              {displayMeaning || '本地词典未收录这个词'}
+            </p>
             {!displayMeaning && (
-              <span className="mt-1 block text-xs text-slate-400">可以先用「朗读」听发音，或到「词库」搜索该词。</span>
+              <span className="mt-1 block text-xs text-slate-400">可以到「词库」搜索该词。</span>
             )}
+          </div>
+
+          <p className="mb-2.5 mt-5 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+            Examples · 例句
+            <span className="ml-2 font-normal tracking-normal text-slate-400">（点词继续查）</span>
           </p>
+          {detailWord && detailWord.examples.length > 0 ? (
+            <ul className="space-y-3">
+              {detailWord.examples.map((ex, i) => (
+                <li key={i} className="surface px-4 py-3.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-display text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
+                      {renderExampleNodes(ex.en)}
+                    </p>
+                    <SpeakerBtn text={ex.en} rate={0.9} iconSize={16} className="-mr-1 -mt-1 shrink-0" />
+                  </div>
+                  {ex.zh && (
+                    <p className="mt-1 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">{ex.zh}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="rounded-[18px] border border-dashed border-slate-300/80 py-6 text-center text-sm text-slate-400 dark:border-slate-700/70">
+              暂无例句
+            </p>
+          )}
+
           {target?.key && marks[target.key] && (
-            <p className="mt-3 text-xs text-slate-400">
+            <p className="mt-4 text-xs text-slate-400">
               当前标记：
               <span className="font-semibold">
                 {marks[target.key] === 'known' ? '已掌握' : marks[target.key] === 'fuzzy' ? '模糊' : '不认识'}
@@ -549,6 +675,144 @@ export default function LessonReader({
           )}
         </div>
       </Sheet>
+
+      {/* 底部播放器：时间轴 + 倍速 / 循环 / 上一句 / 播放 / 下一句 */}
+      {!pendingLesson && lines.length > 0 && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200/70 bg-white/95 backdrop-blur-xl dark:border-white/10 dark:bg-slate-900/95"
+          style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+        >
+          <div className="mx-auto max-w-5xl px-4 pb-2 pt-2">
+            <div className="flex items-center gap-2.5">
+              <span className="w-10 shrink-0 text-right text-[10px] tabular-nums text-slate-400">
+                {queue.preparing ? '准备中' : fmtTime(queue.elapsed)}
+              </span>
+              <div
+                role="slider"
+                aria-label="播放进度"
+                aria-valuemin={0}
+                aria-valuemax={Math.max(1, Math.round(queue.duration))}
+                aria-valuenow={Math.round(queue.elapsed)}
+                aria-valuetext={`${fmtTime(queue.elapsed)} / ${fmtTime(queue.duration)}`}
+                tabIndex={0}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  queue.seekTo((e.clientX - rect.left) / rect.width)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'ArrowLeft') queue.seekTo((queue.elapsed - 5) / Math.max(queue.duration, 1))
+                  if (e.key === 'ArrowRight') queue.seekTo((queue.elapsed + 5) / Math.max(queue.duration, 1))
+                }}
+                className="relative h-1.5 flex-1 cursor-pointer rounded-full bg-slate-900/10 dark:bg-white/15"
+              >
+                <div
+                  className="h-full rounded-full bg-brand-500 transition-[width] duration-150 ease-linear"
+                  style={{
+                    width: `${queue.duration > 0 ? Math.max(0, Math.min(100, (queue.elapsed / queue.duration) * 100)) : 0}%`,
+                  }}
+                />
+              </div>
+              <span className="w-10 shrink-0 text-[10px] tabular-nums text-slate-400">
+                {fmtTime(queue.duration)}
+              </span>
+            </div>
+
+            {/* 三栏：左右各一个 chip，中间三个播放按钮严格居中于屏幕 */}
+            <div className="mt-1 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+              <div ref={rateMenuRef} className="relative flex justify-start">
+                <button
+                  type="button"
+                  onClick={() => setRateOpen((v) => !v)}
+                  aria-expanded={rateOpen}
+                  aria-haspopup="listbox"
+                  title="选择倍速"
+                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition active:scale-95 ${
+                    rateOpen
+                      ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500/50 dark:bg-brand-500/15 dark:text-brand-300'
+                      : 'border-slate-300/70 bg-white/70 text-slate-600 hover:border-brand-300 dark:border-slate-600 dark:bg-white/5 dark:text-slate-300'
+                  }`}
+                >
+                  {queue.rate.toFixed(1)}×
+                  <ChevronRightIcon width={12} height={12} className={rateOpen ? '-rotate-90' : 'rotate-90'} />
+                </button>
+                {rateOpen && (
+                  <div
+                    role="listbox"
+                    className="absolute bottom-full left-0 z-40 mb-2 w-28 overflow-hidden rounded-[14px] border border-slate-200/70 bg-white p-1 shadow-float dark:border-slate-700/60 dark:bg-slate-800"
+                  >
+                    {RATES.map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        role="option"
+                        aria-selected={r === queue.rate}
+                        onClick={() => {
+                          queue.setRate(r)
+                          setRateOpen(false)
+                        }}
+                        className={`flex w-full items-center justify-between rounded-[10px] px-2.5 py-1.5 text-[12px] font-semibold transition ${
+                          r === queue.rate
+                            ? 'bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
+                            : 'text-slate-600 hover:bg-slate-900/5 dark:text-slate-300 dark:hover:bg-white/10'
+                        }`}
+                      >
+                        {r.toFixed(1)}×
+                        {r === queue.rate && <CheckIcon width={13} height={13} />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-center gap-4 sm:gap-6">
+                <button
+                  onClick={queue.prev}
+                  aria-label="上一句"
+                  className="rounded-full p-2 text-slate-600 transition hover:bg-slate-900/5 dark:text-slate-200 dark:hover:bg-white/10"
+                >
+                  <SkipBackIcon width={20} height={20} />
+                </button>
+                <button
+                  onClick={queue.toggle}
+                  aria-label={queue.playing ? '暂停' : '播放'}
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-600 text-white shadow-soft transition active:scale-95"
+                >
+                  {queue.preparing ? (
+                    <SpinnerIcon width={20} height={20} className="animate-spin" />
+                  ) : queue.playing ? (
+                    <PauseIcon width={20} height={20} />
+                  ) : (
+                    <PlayIcon width={20} height={20} />
+                  )}
+                </button>
+                <button
+                  onClick={queue.next}
+                  aria-label="下一句"
+                  className="rounded-full p-2 text-slate-600 transition hover:bg-slate-900/5 dark:text-slate-200 dark:hover:bg-white/10"
+                >
+                  <SkipForwardIcon width={20} height={20} />
+                </button>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => queue.setLoop(!queue.loop)}
+                  aria-pressed={queue.loop}
+                  title="循环播放本篇"
+                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition active:scale-95 ${
+                    queue.loop
+                      ? 'border-brand-400 bg-brand-600 text-white dark:border-brand-500/50'
+                      : 'border-slate-300/70 bg-white/70 text-slate-600 hover:border-brand-300 dark:border-slate-600 dark:bg-white/5 dark:text-slate-300'
+                  }`}
+                >
+                  <RotateCcwIcon width={11} height={11} />
+                  循环
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

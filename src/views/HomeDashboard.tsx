@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ALL_WORDS, TOTAL } from '../data'
 import type { Level, Word } from '../data'
 import {
@@ -9,11 +9,14 @@ import {
   type Route,
 } from '../data/levels'
 import { getDueCount } from '../lib/study'
+import { getSentenceProgress, subscribeSentenceProgress } from '../lib/sentenceProgress'
 import {
   BookOpenIcon,
   ChevronRightIcon,
+  ListIcon,
   RotateCcwIcon,
   SearchIcon,
+  TargetIcon,
 } from '../components/icons'
 
 interface Props {
@@ -25,9 +28,11 @@ interface Props {
   canAdvance: boolean
   streak: number
   onOpenBrowse: () => void
+  onOpenSentences: () => void
   onOpenStudy: () => void
   onOpenSearch: () => void
   onStartQuiz: () => void
+  onOpenChallenges: () => void
 }
 
 export default function HomeDashboard({
@@ -39,9 +44,11 @@ export default function HomeDashboard({
   canAdvance,
   streak,
   onOpenBrowse,
+  onOpenSentences,
   onOpenStudy,
   onOpenSearch,
   onStartQuiz,
+  onOpenChallenges,
 }: Props) {
   // ── 激活窗口词 ──────────────────────────────────────────
   const activeGradesList = useMemo(
@@ -60,6 +67,15 @@ export default function HomeDashboard({
   const overallDone = masteredArr.length
   const activeNew = currentTotal - currentDone
   const due = getDueCount()
+
+  // 短句进度独立存储，短句页标记后这里要同步刷新统计
+  const [sentenceVersion, setSentenceVersion] = useState(0)
+  useEffect(() => subscribeSentenceProgress(() => setSentenceVersion((v) => v + 1)), [])
+  const sentenceProgress = useMemo(() => getSentenceProgress(), [sentenceVersion])
+  const dueText = [
+    due > 0 ? `${due} 词` : '',
+    sentenceProgress.due > 0 ? `${sentenceProgress.due} 句` : '',
+  ].filter(Boolean).join(' · ')
 
   // ── 当前等级标签 ────────────────────────────────────────
   const rungLabel = useMemo(() => {
@@ -192,7 +208,7 @@ export default function HomeDashboard({
         </button>
       )}
 
-      {/* 背词 / 复习 入口卡 */}
+      {/* 背词 / 短句 / 闯关 / 复习 入口卡（2×2） */}
       <div className="mb-5 grid grid-cols-2 gap-3">
         <button
           onClick={onOpenBrowse}
@@ -216,16 +232,56 @@ export default function HomeDashboard({
         </button>
 
         <button
+          onClick={onOpenSentences}
+          className="flex flex-col items-start gap-2 rounded-[20px] border border-slate-900/[0.04] bg-white p-3.5 text-left shadow-float transition hover:bg-slate-50 active:scale-[0.985] dark:border-white/10 dark:bg-white/[0.04] dark:hover:bg-white/[0.06]"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-[12px] bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+            <ListIcon width={18} height={18} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold text-slate-900 dark:text-slate-50">短句</p>
+            <p className="mt-0.5 text-[11px] text-slate-400">
+              600 句 · 已掌握 {sentenceProgress.mastered}
+            </p>
+          </div>
+          <div className="mt-auto flex w-full items-center justify-between">
+            <span />
+            <span className="flex items-center gap-0.5 text-[12px] font-semibold text-brand-600 dark:text-brand-300">
+              去学习 <ChevronRightIcon width={14} height={14} />
+            </span>
+          </div>
+        </button>
+
+        <button
+          onClick={onOpenChallenges}
+          className="flex flex-col items-start gap-2 rounded-[20px] border border-slate-900/[0.04] bg-white p-3.5 text-left shadow-float transition hover:bg-slate-50 active:scale-[0.985] dark:border-white/10 dark:bg-white/[0.04] dark:hover:bg-white/[0.06]"
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-[12px] bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300">
+            <TargetIcon width={18} height={18} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[14px] font-bold text-slate-900 dark:text-slate-50">闯关</p>
+            <p className="mt-0.5 text-[11px] text-slate-400">互动小游戏 · 边玩边记</p>
+          </div>
+          <div className="mt-auto flex w-full items-center justify-between">
+            <span />
+            <span className="flex items-center gap-0.5 text-[12px] font-semibold text-violet-600 dark:text-violet-300">
+              去游戏 <ChevronRightIcon width={14} height={14} />
+            </span>
+          </div>
+        </button>
+
+        <button
           onClick={onOpenStudy}
           className="flex flex-col items-start gap-2 rounded-[20px] border border-slate-900/[0.04] bg-white p-3.5 text-left shadow-float transition hover:bg-slate-50 active:scale-[0.985] dark:border-white/10 dark:bg-white/[0.04] dark:hover:bg-white/[0.06]"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-[12px] bg-accent-lime/20 text-brand-700 dark:bg-accent-lime/15 dark:text-accent-lime">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-accent-lime/20 text-brand-700 dark:bg-accent-lime/15 dark:text-accent-lime">
             <RotateCcwIcon width={18} height={18} />
           </span>
           <div className="min-w-0">
             <p className="text-[14px] font-bold text-slate-900 dark:text-slate-50">复习</p>
             <p className="mt-0.5 text-[11px] text-slate-400">
-              {due > 0 ? `${due} 词到期复习` : '暂无到期词'}
+              {dueText ? `${dueText} 到期复习` : '单词 + 短句 · 暂无到期内容'}
             </p>
           </div>
           <div className="mt-auto flex w-full items-center justify-between">

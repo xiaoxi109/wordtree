@@ -1,4 +1,5 @@
 import { ALL_WORDS } from './index'
+import { positiveExamples } from '../lib/positiveExamples'
 import { WORD_CATEGORY } from './generated/categories'
 import type { Level, Word, CategoryId } from './types'
 import { PEP_GRADE_WORDS, type PepWord } from './pepGrades'
@@ -122,7 +123,7 @@ export function wordsByGrade(): Record<GradeId, Word[]> {
           ipa: enrich?.ipa || pw.phonetic,
           pos: '',
           meaning: pw.zh || en,
-          examples: enrich?.examples ?? [],
+          examples: positiveExamples(enrich?.examples),
           category: categoryOf(en),
           pepOnly: true,
           grade: g.id,

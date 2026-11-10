@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
-import { buildMasteredPool, categoryOfKey, TOPICS, type LessonGroup, type PoolWord, type TopicId } from '../lib/cluster'
+import { buildMasteredPool, categoryOfKey, sceneLabelText, TOPICS, type LessonGroup, type PoolWord, type TopicId } from '../lib/cluster'
 import type { CategoryId, Level } from '../data/types'
 import { chatJSON, LlmError, llmErrorMessage } from '../lib/llm'
 import { buildLessonMessages, LESSON_FORMATS, type Difficulty, type LessonCondition, type LessonFormatChoice, type LessonKind } from '../lib/prompt'
@@ -282,7 +282,8 @@ function pickOneGroup(
   return {
     id: cat,
     category: cat,
-    sceneLabel: cat,
+    // 存中文场景名，别把内部 category id（people / food …）直接落到界面上
+    sceneLabel: sceneLabelText(String(cat ?? 'mixed')),
     sceneEn: '',
     words: finalWords,
   }

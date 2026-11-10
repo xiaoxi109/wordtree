@@ -1,20 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
-import { useSpeech } from '../hooks/useSpeech'
 import { AiSettingsFields } from '../components/AiSettings'
-import { ActionSheet } from '../components/Sheet'
 import {
+  CheckIcon,
   ChevronRightIcon,
   DownloadIcon,
   GearIcon,
   MoonIcon,
   SparklesIcon,
-  SpeakerIcon,
-  SpinnerIcon,
   SunIcon,
   TargetIcon,
-  TrashIcon,
   UploadIcon,
 } from '../components/icons'
 import {
@@ -30,65 +26,6 @@ import {
 type Theme = 'light' | 'dark'
 type Toast = { id: number; msg: string; type: 'success' | 'error' | 'info' }
 type OnToast = (msg: string, type?: Toast['type']) => void
-
-/* ----------------------------- Model download ----------------------------- */
-function ModelDownloadBtn({ onToast }: { onToast: OnToast }) {
-  const { downloadStatus, downloadProgress, speak, speaking, preload } = useSpeech()
-  const ready = downloadStatus === 'ready'
-  const downloading = downloadStatus === 'downloading'
-
-  const handle = async () => {
-    if (ready) {
-      // 模型已就绪：直接试听（在用户手势内播放，避免自动播放拦截）
-      try {
-        await speak('Hello, this is a test.', 0.95)
-      } catch {
-        onToast('播放失败', 'error')
-      }
-      return
-    }
-    if (downloading) return
-    // 未就绪：仅初始化模型（不播放，避免异步加载后 play 失去手势被拦）
-    try {
-      onToast('开始初始化语音模型（约 60MB，首次较慢）…', 'info')
-      await preload()
-      onToast('语音模型已就绪 🎉 点击可试听', 'success')
-    } catch {
-      onToast('语音模型加载失败，请检查资源是否完整', 'error')
-    }
-  }
-
-  return (
-    <button
-      onClick={handle}
-      disabled={downloading}
-      title={ready ? '点击试听' : '点击初始化语音模型'}
-      className={`w-full ${
-        ready
-          ? 'inline-flex items-center justify-center gap-2 rounded-[18px] border border-brand-200/70 bg-brand-50/80 px-3 py-3 text-sm font-semibold text-brand-700 transition active:scale-[0.99] dark:border-brand-500/25 dark:bg-brand-500/10 dark:text-brand-300'
-          : 'btn-ink'
-      } disabled:opacity-60`}
-    >
-      {downloading ? (
-        <>
-          <SpinnerIcon width={16} height={16} className="animate-spin" />
-          下载中 {downloadProgress.pct}%
-        </>
-      ) : ready ? (
-        <>
-          <SpeakerIcon width={16} height={16} />
-          发音已就绪 · 点击试听
-        </>
-      ) : (
-        <>
-          <DownloadIcon width={16} height={16} />
-          下载发音模型
-        </>
-      )}
-      {speaking && <span className="ml-1 h-2 w-2 animate-pulse rounded-full bg-amber-400" />}
-    </button>
-  )
-}
 
 /* ----------------------------- Sync progress ----------------------------- */
 function SyncProgressActions({
@@ -170,16 +107,16 @@ function SyncProgressActions({
   )
 }
 
-/** 设置（底部「我」标签的一级页）：学习路线、外观、发音、学习数据、大模型入口。 */
+/** 设置（底部「我」标签的一级页）：学习路线、外观、学习数据、大模型入口。 */
 export default function SettingsView({
   theme,
   aiEnabled,
   masteredCount: _masteredCount,
   onToggleTheme,
   onOpenLlm,
+  onOpenRung,
   onToast,
   onImport,
-  onClearProgress,
   route,
   setRoute,
   currentRung,
@@ -190,16 +127,14 @@ export default function SettingsView({
   masteredCount?: number
   onToggleTheme: () => void
   onOpenLlm: () => void
+  onOpenRung: () => void
   onToast: OnToast
   onImport: (words: string[]) => void
-  onClearProgress: () => void
   route: Route
   setRoute: (r: Route) => void
   currentRung: GradeRung | LevelRung
   setCurrentRung: (r: GradeRung | LevelRung) => void
 }) {
-  const [confirmClear, setConfirmClear] = useState(false)
-
   // 切换路线时，如果当前 rung 在新路线中不兼容，自动对齐：
   //   - grade→level: 当前 rung 是 GradeRung，映射到对应的 LevelRung
   //   - level→grade: 当前 rung 是 LevelRung，取对应的最低 GradeRung
@@ -224,19 +159,6 @@ export default function SettingsView({
     const l = LEVEL_RUNGS.find((r) => r.id === currentRung)
     return l ? `${l.label}（${l.desc}）` : String(currentRung)
   }, [route, currentRung])
-
-  const [rungPickerOpen, setRungPickerOpen] = useState(false)
-
-  // 清除本地学习数据：掌握进度 + 复习计划 + 错词队列，保留外观设置。
-  const clearProgress = () => {
-    localStorage.removeItem('lexicore-mastered')
-    localStorage.removeItem('lexicore-study')
-    localStorage.removeItem('lexicore-ai-review')
-    localStorage.removeItem('lexicore-streak')
-    // 直接更新内存状态，不再靠 reload：避免丢失页面栈/滚动，也让首页连续天数立刻归零。
-    onClearProgress()
-    onToast('已清除学习进度', 'success')
-  }
 
   return (
     <div className="pb-6">
@@ -277,7 +199,7 @@ export default function SettingsView({
             ))}
           </div>
           <button
-            onClick={() => setRungPickerOpen(true)}
+            onClick={onOpenRung}
             className="mt-3 flex w-full items-center justify-between rounded-[14px] border border-slate-200/60 bg-white/70 px-3 py-2.5 text-left transition hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:hover:bg-slate-800"
           >
             <div className="min-w-0 flex items-center gap-2">
@@ -290,24 +212,6 @@ export default function SettingsView({
             </div>
           </button>
         </section>
-
-        {/* 等级选择弹层 */}
-        <ActionSheet
-          open={rungPickerOpen}
-          onClose={() => setRungPickerOpen(false)}
-          title="选择当前等级"
-          message="词表默认显示当前等级及以下的词。晋级后可回看更难的词。"
-          actions={(route === 'grade' ? GRADE_RUNGS : LEVEL_RUNGS)
-            .filter((r) => r.id !== 'C2') // C2 预留，暂不在选择中
-            .map((r) => ({
-              label: `${r.label} · ${r.desc}`,
-              description: r.id === currentRung ? '✓ 当前等级' : undefined,
-              onClick: () => {
-                setCurrentRung(r.id as GradeRung | LevelRung)
-                setRungPickerOpen(false)
-              },
-            }))}
-        />
 
         <section className="surface flex items-center justify-between gap-3 px-3 py-2.5">
           <div className="flex min-w-0 items-center gap-3">
@@ -353,23 +257,6 @@ export default function SettingsView({
         )}
 
         <section className="surface p-3">
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
-              <SpeakerIcon width={18} height={18} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-slate-800 dark:text-slate-100">离线发音</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-slate-400">
-                首次下载约 60MB，之后无需联网也能朗读单词和例句。
-              </p>
-            </div>
-          </div>
-          <div className="mt-3">
-            <ModelDownloadBtn onToast={onToast} />
-          </div>
-        </section>
-
-        <section className="surface p-3">
           <p className="text-sm font-bold text-slate-800 dark:text-slate-100">学习进度</p>
           <p className="mt-0.5 text-xs leading-relaxed text-slate-400">
             导出 JSON 备份，或从备份恢复；导入会与现有进度合并。
@@ -377,20 +264,6 @@ export default function SettingsView({
           <div className="mt-3">
             <SyncProgressActions onToast={onToast} onImported={onImport} />
           </div>
-          <button
-            onClick={() => setConfirmClear(true)}
-            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-[14px] border border-rose-200/70 bg-rose-50/70 px-3 py-2.5 text-[13px] font-semibold text-rose-600 transition hover:bg-rose-100 active:scale-[0.99] dark:border-rose-500/25 dark:bg-rose-500/10 dark:text-rose-300"
-          >
-            <TrashIcon width={15} height={15} />
-            清除学习进度
-          </button>
-        </section>
-
-        <section className="surface-flat px-3 py-2.5">
-          <p className="eyebrow">数据来源</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-            分级词表依据人教版教材整理（cyforkk/pep-english-words, MIT）；释义、音标与例句来自公开词典接口，仅供个人学习使用。
-          </p>
         </section>
 
         <p className="pt-1 text-center text-[11px] text-slate-400">
@@ -398,38 +271,75 @@ export default function SettingsView({
         </p>
       </div>
 
-      <ActionSheet
-        open={confirmClear}
-        onClose={() => setConfirmClear(false)}
-        title="清除学习进度？"
-        message="已掌握标记、复习计划与错词本都会被清空，且无法恢复。"
-        actions={[
-          {
-            label: '确认清除',
-            description: '建议先导出备份',
-            tone: 'danger',
-            icon: <TrashIcon width={17} height={17} />,
-            onClick: clearProgress,
-          },
-        ]}
-      />
     </div>
   )
 }
 
-/** 大模型设置（三级页）：从设置进入，管理可用模型与当前启用项。 */
+/** 大模型设置（二级页）：从设置进入，管理可用模型与当前启用项。 */
 export function LlmSettingsView({ onToast }: { onToast: OnToast }) {
-  const isWeb = !Capacitor.isNativePlatform()
   return (
     <div className="pb-8">
-      <section className="surface-flat mb-4 px-4 py-3">
-        <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-          自定义模型支持任意 OpenAI 兼容接口（含中转站），配置仅写入本机 localStorage。
-          系统默认模型由应用内置，不可修改或查看详情。
-          {isWeb && ' 网页版受浏览器跨域限制，接口需返回 CORS 允许头才能请求成功；安卓 App 走原生请求，无此限制。'}
-        </p>
-      </section>
       <AiSettingsFields onToast={onToast} />
+    </div>
+  )
+}
+
+/** 我的等级（二级页）：按当前学习路线列出阶梯，选中即返回设置页。 */
+export function RungPickerView({
+  route,
+  currentRung,
+  setCurrentRung,
+  onDone,
+}: {
+  route: Route
+  currentRung: GradeRung | LevelRung
+  setCurrentRung: (r: GradeRung | LevelRung) => void
+  onDone: () => void
+}) {
+  // C2 为预留档，暂不提供选择
+  const options = (route === 'grade' ? GRADE_RUNGS : LEVEL_RUNGS).filter((r) => r.id !== 'C2')
+  return (
+    <div className="pb-8">
+      <p className="mb-2.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
+        {route === 'grade' ? '中式阶梯' : '西式阶梯'} · 词表默认显示当前等级及以下的词
+      </p>
+      <div className="space-y-1.5">
+        {options.map((r) => {
+          const selected = r.id === currentRung
+          return (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => {
+                setCurrentRung(r.id as GradeRung | LevelRung)
+                onDone()
+              }}
+              className={`surface flex w-full items-center gap-3 px-3 py-2.5 text-left transition active:scale-[0.995] ${
+                selected ? 'ring-1 ring-brand-400/60' : ''
+              }`}
+            >
+              <span
+                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition ${
+                  selected
+                    ? 'border-brand-600 bg-brand-600 text-white'
+                    : 'border-slate-300 bg-transparent dark:border-slate-600'
+                }`}
+              >
+                {selected && <CheckIcon width={12} height={12} />}
+              </span>
+              <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                <span className="shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">{r.label}</span>
+                <span className="min-w-0 truncate text-xs text-slate-400">{r.desc}</span>
+              </span>
+              {selected && (
+                <span className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
+                  使用中
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }

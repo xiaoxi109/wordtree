@@ -103,7 +103,7 @@ body {
 
 /* Toast animation */
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .animate-toast-in {
@@ -135,20 +135,8 @@ body {
 .animate-sheet-up {
   animation: sheet-up 0.32s cubic-bezier(0.16, 1, 0.3, 1);
 }
-@keyframes sheet-down {
-  from { transform: translateY(0); }
-  to   { transform: translateY(100%); }
-}
-.animate-sheet-down {
-  animation: sheet-down 0.2s cubic-bezier(0.4, 0, 1, 1) forwards;
-}
-@keyframes fade-out {
-  from { opacity: 1; }
-  to   { opacity: 0; }
-}
-.animate-fade-out {
-  animation: fade-out 0.2s ease-in forwards;
-}
+/* 关闭不播动画：弹层在桌面端居中，下滑 translateY(100%) 不足以移出视口，
+   遮罩淡出后弹层仍短暂留在屏幕下方，会被误看成又弹出一个弹窗。 */
 
 
 /* 页面进入：轻微上浮，避免生硬切换 */
@@ -191,6 +179,16 @@ body {
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* 主滚动容器是 App 自己的 div：移动端不需要显示原生滚动条，
+   内容没填满时也不该出现一条灰色轨道。滚动能力保持不变。 */
+#app-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#app-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 /* 隐藏横向滚动条（等级轨 / 标签轨） */

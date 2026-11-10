@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { XIcon } from './icons'
 import { registerBack } from '../lib/back'
@@ -6,20 +6,37 @@ import { registerBack } from '../lib/back'
 /** 下拉关闭阈值（px） */
 const DISMISS_THRESHOLD = 96
 
+/**
+ * 宿主页面是否处于可见状态（页面栈顶 / 当前 tab）。
+ * 弹层通过 Portal 挂到 body，不会随页面 hidden 一起隐藏，
+ * 因此需要此标记让非活跃页面的弹层立即卸载，避免残留并在其它页面上叠加。
+ */
+export const PageActiveContext = createContext(true)
+
 /*
  * 背景真正滚动的是 App 根 div（h-screen overflow-y-auto），body 本身已被 CSS
  * 设为 overflow:hidden，锁 body 没有任何效果。用引用计数支持多个 Sheet 叠加：
  * 只有第一个打开的加锁、最后一个关闭的解锁，避免互相覆盖恢复值。
+ *
+ * 直接把 overflow 设为 hidden 会让垂直滚动条消失、内容区变宽约 15px，
+ * 打开和关闭弹层时页面各横向晃动一次。因此用 padding-right 补上滚动条宽度，
+ * 保持内容区宽度与布局不变（fixed 定位的导航/弹层不受此 padding 影响）。
  */
 let scrollLockCount = 0
 let savedScrollOverflow = ''
+let savedPaddingRight = ''
 
 function lockAppScroll(): void {
   const el = document.getElementById('app-scroll')
   if (!el) return
   if (scrollLockCount === 0) {
     savedScrollOverflow = el.style.overflow
+    savedPaddingRight = el.style.paddingRight
+    // app-scroll 占满视口且无 border，clientWidth 不含滚动条，差值即滚动条宽度
+    const gap = window.innerWidth - el.clientWidth
+    const basePadding = parseFloat(window.getComputedStyle(el).paddingRight) || 0
     el.style.overflow = 'hidden'
+    if (gap > 0) el.style.paddingRight = `${basePadding + gap}px`
   }
   scrollLockCount += 1
 }
@@ -28,7 +45,10 @@ function unlockAppScroll(): void {
   scrollLockCount = Math.max(0, scrollLockCount - 1)
   if (scrollLockCount > 0) return
   const el = document.getElementById('app-scroll')
-  if (el) el.style.overflow = savedScrollOverflow
+  if (el) {
+    el.style.overflow = savedScrollOverflow
+    el.style.paddingRight = savedPaddingRight
+  }
 }
 
 /**
@@ -43,6 +63,7 @@ export function Sheet({
   children,
   footer,
   maxWidth = 'max-w-lg',
+  panelClassName = '',
 }: {
   open: boolean
   onClose: () => void
@@ -51,23 +72,24 @@ export function Sheet({
   children: ReactNode
   footer?: ReactNode
   maxWidth?: string
+  /** 追加到弹层面板：可用来把整张弹层上移（mb-*），让底部按钮不贴屏幕边 */
+  panelClassName?: string
 }) {
+  const active = useContext(PageActiveContext)
   const closeRef = useRef(onClose)
   closeRef.current = onClose
 
-  /** 关闭中：先播下滑动画，结束后再真正关闭 */
-  const [closing, setClosing] = useState(false)
+  /**
+   * 关闭时立即卸载，不播关闭动画。
+   * 桌面端弹层是居中的，translateY(100%) 不足以移出视口；遮罩先淡出、弹层仍停留在
+   * 屏幕下方的那 200ms 会被看成「又弹出一个弹窗」。
+   */
   const closingRef = useRef(false)
-  const closeTimerRef = useRef<number | null>(null)
 
   const requestClose = useCallback(() => {
     if (closingRef.current) return
     closingRef.current = true
-    setClosing(true)
-    closeTimerRef.current = window.setTimeout(() => {
-      closeTimerRef.current = null
-      closeRef.current()
-    }, 200)
+    closeRef.current()
   }, [])
 
   /** 下拉位移（仅头部区域可拖拽，避免与内容滚动冲突） */
@@ -76,8 +98,13 @@ export function Sheet({
   const dragYRef = useRef(0)
   const startYRef = useRef<number | null>(null)
 
+  // 页面失活时立即清空弹层状态，避免返回后弹层又重新出现
   useEffect(() => {
-    if (!open) return
+    if (!active && open) closeRef.current()
+  }, [active, open])
+
+  useEffect(() => {
+    if (!open || !active) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && requestClose()
     window.addEventListener('keydown', onKey)
     lockAppScroll()
@@ -87,20 +114,15 @@ export function Sheet({
 
     return () => {
       window.removeEventListener('keydown', onKey)
-      if (closeTimerRef.current !== null) {
-        window.clearTimeout(closeTimerRef.current)
-        closeTimerRef.current = null
-      }
       unlockAppScroll()
       unregister()
     }
-  }, [open, requestClose])
+  }, [open, active, requestClose])
 
-  // 打开时重置动画状态；关闭后重置位移
+  // 打开时重置关闭标记；关闭后重置位移
   useEffect(() => {
     if (open) {
       closingRef.current = false
-      setClosing(false)
     } else {
       dragYRef.current = 0
       setDragY(0)
@@ -129,7 +151,7 @@ export function Sheet({
     setDragY(0)
   }
 
-  if (!open) return null
+  if (!open || !active) return null
   // 通过 Portal 挂到 body：祖先若有 backdrop-filter / transform / overflow，
   // 会成为 fixed 子元素的包含块，导致弹层被裁在祖先盒子里（筛选栏 backdrop-blur 就会这样）。
   return createPortal(
@@ -141,15 +163,11 @@ export function Sheet({
       aria-label={typeof title === 'string' && title ? title : '弹层'}
     >
       <div
-        className={`absolute inset-0 bg-slate-950/45 backdrop-blur-[6px] ${
-          closing ? 'animate-fade-out' : 'animate-fade-in'
-        }`}
+        className="absolute inset-0 bg-slate-950/45 backdrop-blur-[6px] animate-fade-in"
         aria-hidden="true"
       />
       <div
-        className={`relative flex max-h-[92dvh] w-full ${maxWidth} flex-col overflow-hidden rounded-t-[32px] border border-white/60 bg-[#fbf8f2] shadow-float dark:border-slate-700/60 dark:bg-[#1c1a16] sm:rounded-[32px] ${
-          closing ? 'animate-sheet-down' : 'animate-sheet-up'
-        }`}
+        className={`relative flex max-h-[92dvh] w-full ${maxWidth} flex-col overflow-hidden rounded-t-[32px] border border-white/60 bg-[#fbf8f2] shadow-float dark:border-slate-700/60 dark:bg-[#1c1a16] sm:rounded-[32px] animate-sheet-up ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
         style={{
           paddingBottom: 'env(safe-area-inset-bottom)',
