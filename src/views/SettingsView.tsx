@@ -185,14 +185,14 @@ export default function SettingsView({
                 key={t.id}
                 onClick={() => switchRoute(t.id)}
                 aria-pressed={route === t.id}
-                className={`rounded-[11px] px-2 py-2 text-xs font-bold transition duration-200 ${
+                className={`rounded-[11px] border px-2 py-2 text-xs font-bold transition duration-200 ${
                   route === t.id
-                    ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
-                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                    ? 'border-brand-400/70 bg-brand-50 text-brand-700 shadow-sm dark:border-brand-400/45 dark:bg-brand-400/20 dark:text-brand-100'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
                 }`}
               >
                 {t.label}
-                <span className={`ml-1 text-[10px] font-normal ${route === t.id ? 'text-white/70 dark:text-slate-500' : 'text-slate-400'}`}>
+                <span className={`ml-1 text-[10px] font-normal ${route === t.id ? 'text-brand-600 dark:text-brand-200/70' : 'text-slate-400'}`}>
                   {t.hint}
                 </span>
               </button>

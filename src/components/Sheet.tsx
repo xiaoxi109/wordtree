@@ -62,6 +62,8 @@ export function Sheet({
   subtitle,
   children,
   footer,
+  headerExtra,
+  headerLeading,
   maxWidth = 'max-w-lg',
   panelClassName = '',
 }: {
@@ -71,6 +73,10 @@ export function Sheet({
   subtitle?: ReactNode
   children: ReactNode
   footer?: ReactNode
+  /** 固定头部右侧的额外操作（与关闭按钮同一行，不随内容滚动） */
+  headerExtra?: ReactNode
+  /** 固定头部左侧的替代内容（传了则取代 title/subtitle，用于放返回按钮等） */
+  headerLeading?: ReactNode
   maxWidth?: string
   /** 追加到弹层面板：可用来把整张弹层上移（mb-*），让底部按钮不贴屏幕边 */
   panelClassName?: string
@@ -167,7 +173,7 @@ export function Sheet({
         aria-hidden="true"
       />
       <div
-        className={`relative flex max-h-[92dvh] w-full ${maxWidth} flex-col overflow-hidden rounded-t-[32px] border border-white/60 bg-[#fbf8f2] shadow-float dark:border-slate-700/60 dark:bg-[#1c1a16] sm:rounded-[32px] animate-sheet-up ${panelClassName}`}
+        className={`relative flex max-h-[92dvh] w-full ${maxWidth} flex-col overflow-hidden rounded-t-[32px] border border-white/60 bg-[#fbf8f2] shadow-float dark:border-slate-700/60 dark:bg-slate-900 sm:rounded-[32px] animate-sheet-up ${panelClassName}`}
         onClick={(e) => e.stopPropagation()}
         style={{
           paddingBottom: 'env(safe-area-inset-bottom)',
@@ -185,19 +191,26 @@ export function Sheet({
         >
           <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-slate-300/80 dark:bg-slate-600 sm:hidden" />
           <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-4">
-            <div className="min-w-0">
-              {title && (
-                <h2 className="truncate font-display text-xl font-semibold text-slate-900 dark:text-slate-50">{title}</h2>
+            <div className="min-w-0 flex-1">
+              {headerLeading ?? (
+                <>
+                  {title && (
+                    <h2 className="truncate font-display text-xl font-semibold text-slate-900 dark:text-slate-50">{title}</h2>
+                  )}
+                  {subtitle && <p className="mt-1 text-xs leading-relaxed text-slate-400">{subtitle}</p>}
+                </>
               )}
-              {subtitle && <p className="mt-1 text-xs leading-relaxed text-slate-400">{subtitle}</p>}
             </div>
-            <button
-              onClick={requestClose}
-              className="shrink-0 rounded-full border border-slate-200/60 bg-white/60 p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 dark:border-slate-700/60 dark:bg-slate-800/50 dark:hover:bg-slate-800"
-              aria-label="关闭"
-            >
-              <XIcon width={19} height={19} />
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {headerExtra}
+              <button
+                onClick={requestClose}
+                className="shrink-0 rounded-full border border-slate-200/60 bg-white/60 p-1.5 text-slate-400 transition hover:bg-white hover:text-slate-700 dark:border-slate-700/60 dark:bg-slate-800/50 dark:hover:bg-slate-800"
+                aria-label="关闭"
+              >
+                <XIcon width={19} height={19} />
+              </button>
+            </div>
           </div>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 pb-5 pt-1">{children}</div>

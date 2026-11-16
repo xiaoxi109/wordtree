@@ -27,19 +27,22 @@ export default {
         ],
       },
       colors: {
-        // 温暖纸感中性色：覆盖 slate，让全站从冷灰转为纸张/墨水。
+        // 中性色与白色由 CSS 变量驱动：浅色是温暖纸感，深色在 index.css 里
+        // 换成一套冷调、分层清晰的色板，避免全站出现「半透明白叠纯黑」的灰脏感。
+        // rgb(var(--x) / <alpha-value>) 让 /10、/[0.04] 等透明度修饰符照常可用。
+        white: 'rgb(var(--tone-white) / <alpha-value>)',
         slate: {
-          50: '#f7f4ec',
-          100: '#f0ebe0',
-          200: '#e5dccb',
-          300: '#d3c6b0',
-          400: '#a99b85',
-          500: '#82745f',
-          600: '#625747',
-          700: '#453d32',
-          800: '#2b2721',
-          900: '#191713',
-          950: '#0f0e0b',
+          50: 'rgb(var(--tone-50) / <alpha-value>)',
+          100: 'rgb(var(--tone-100) / <alpha-value>)',
+          200: 'rgb(var(--tone-200) / <alpha-value>)',
+          300: 'rgb(var(--tone-300) / <alpha-value>)',
+          400: 'rgb(var(--tone-400) / <alpha-value>)',
+          500: 'rgb(var(--tone-500) / <alpha-value>)',
+          600: 'rgb(var(--tone-600) / <alpha-value>)',
+          700: 'rgb(var(--tone-700) / <alpha-value>)',
+          800: 'rgb(var(--tone-800) / <alpha-value>)',
+          900: 'rgb(var(--tone-900) / <alpha-value>)',
+          950: 'rgb(var(--tone-950) / <alpha-value>)',
         },
         // 深森林绿：主操作、进度与品牌。
         brand: {

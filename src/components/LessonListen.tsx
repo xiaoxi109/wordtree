@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { SpeechControls } from './SpeechControls'
 import { useSpeechQueue, type QueueLine } from '../hooks/useSpeechQueue'
-import { stripWTags } from '../lib/parse'
+import { stripMarkup, stripWTags } from '../lib/parse'
 
 /**
  * AI 课程「听读」模式：逐句朗读、当前句高亮、自动滚动。
@@ -92,7 +92,7 @@ export default function LessonListen({
                 )}
               </div>
               {showZh && line.zh && (
-                <p className="mt-1 text-xs leading-relaxed text-slate-400">{stripWTags(line.zh)}</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate-400">{stripMarkup(line.zh)}</p>
               )}
             </div>
           )

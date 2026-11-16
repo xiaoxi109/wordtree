@@ -101,7 +101,7 @@ export function AiSettingsFields({ onToast }: { onToast: OnToast }) {
       await chatJSON(
         model.config,
         buildTestMessages(),
-        { maxTokens: 128, temperature: 0, timeoutMs: 30_000 },
+        { maxTokens: 512, temperature: 0, timeoutMs: 30_000 },
       )
       onToast(`「${model.name}」连接成功`, 'success')
     } catch (e) {
@@ -309,7 +309,7 @@ function ModelForm({
       await chatJSON(
         { baseUrl, apiKey, model },
         buildTestMessages(),
-        { maxTokens: 128, temperature: 0, timeoutMs: 30_000 },
+        { maxTokens: 512, temperature: 0, timeoutMs: 30_000 },
       )
       onToast('连接成功，配置可用', 'success')
     } catch (e) {

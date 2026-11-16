@@ -204,7 +204,7 @@ export const A1: Word[] = [
     { en: 'I always feel at home at Ye Olde Starre Inn.', zh: '在昨日星辰客栈，我总是觉得非常舒适安逸。' },
     { en: 'I was good at sums at school.', zh: '我上学时擅长算术。' }
   ] },
-  { word: 'August', level: 'A1', ipa: '/ɔːˈɡʌst/', pos: 'n.', meaning: 'adj. 威严的，令人敬畏的', examples: [
+  { word: 'August', level: 'A1', ipa: '/ɔːˈɡʌst/', pos: 'n.', meaning: 'n. 八月（一年中的第八个月）', examples: [
     { en: 'This place is lousy with tourists in August.', zh: '在八月份，这个地方挤满游人。' },
     { en: 'The player is contracted to play until August.', zh: '这位选手签约参加比赛到八月份。' },
     { en: 'Grouse shooting begins in August.', zh: '松鸡狩猎8月份开始。' }
@@ -2011,8 +2011,7 @@ export const A1: Word[] = [
     { en: 'A map of China.', zh: '一张中国地图。' },
     { en: 'We read the map.', zh: '我们看地图。' }
   ] },
-  { word: 'March', level: 'A1', ipa: '/mɑːtʃ/', pos: 'n.', meaning: 'v. 齐步走，行军；快步走', examples: [
-    { en: 'The enemy are on the march.', zh: '敌人正在行军途中。' },
+  { word: 'March', level: 'A1', ipa: '/mɑːtʃ/', pos: 'n.', meaning: 'n. 三月（一年中的第三个月）', examples: [
     { en: 'We went skiing in France in March.', zh: '三月份我们去法国滑雪了。' },
     { en: 'The trial reopened on 6 March.', zh: '审判在3月6日再次进行。' }
   ] },

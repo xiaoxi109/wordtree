@@ -4,6 +4,11 @@ import { A2 } from './a2'
 import { B1 } from './b1'
 import { B2 } from './b2'
 import { IDIOMS } from './idioms'
+import { ECDICT_CORE } from './generated/ecdict-core'
+import { ECDICT_EXAMPLES } from './generated/ecdict-examples'
+import { MANUAL_EXAMPLES } from './generated/manual-examples'
+import { guessScene } from './sceneRules'
+import { isJunkWord, POS_OVERRIDE } from './lexiconQuality'
 import { CATEGORIES, categoryOf, isCommon } from './generated/categories'
 import { CATEGORY_THEMES, WORD_THEME } from './themes'
 import { PEP_GRADE_WORDS, type PepWord } from './pepGrades'
@@ -26,6 +31,7 @@ import type { GradeId } from './grades'
 export const DATA_DISCLAIMER = {
   grades: '分级词表依据人教版教材整理，来源：cyforkk/pep-english-words (MIT)',
   dictionary: '单词释义/音标/例句用于个人学习，来源非牛津官方授权',
+  ecdict: '补充词层的释义/音标/考纲分级来源于 ECDICT (MIT, Copyright © 2025 Linwei)',
 } as const
 
 export { PRE_A1, A1, A2, B1, B2, CATEGORIES }
@@ -33,6 +39,14 @@ export type { Level, LevelMeta, Word, CategoryId, GradeRung }
 
 /* ----------------------------- 规范化键 ----------------------------- */
 const norm = (s: string) => s.toLowerCase().normalize('NFKC').replace(/[^a-z0-9'-]/g, '')
+
+/**
+ * 生成例句文件（ecdict-examples.ts）的键在生成时被规范化过：空格等符号会被去掉，
+ * 因此 "in fact" 存成 "infact"。这里按同样的规范化建索引，保证短语词也能取到例句。
+ */
+const ECDICT_EXAMPLES_BY_NORM = new Map(
+  Object.entries(ECDICT_EXAMPLES).map(([k, v]) => [norm(k), v] as const),
+)
 
 /* ----------------------------- PEP 词 → 年级 字典 ----------------------------- */
 /**
@@ -57,6 +71,7 @@ const LEVEL_DEFAULT_GRADE: Record<Level, GradeRung> = {
   'A2': 'g8',
   'B1': 'g10',
   'B2': 'g12',
+  'C1': 'cet6',
 }
 
 /** PEP 专有词（不在 CEFR 库）用 grade → 默认 level 兜底 */
@@ -84,8 +99,8 @@ const GRADE_DEFAULT_LEVEL: Record<string, Level> = {
 
 // Step 1: CEFR 主库，按规范化键去重
 //         同时过滤多词短语（含空格/逗号）—— 短语归到 idioms 场景单独管理
-// 注：COCA 扩展包（src/data/extension.ts）暂不并入，先集中完善功能；源文件保留，
-//     日后接入只需恢复 import 并把 ...EXTENSION 加回本数组即可。
+// 注：旧 COCA 扩展包质量不达标（含屈折变体、空释义、等级错标），已删除；
+//     补充词层改由 ECDICT 生成（见 scripts/gen-ecdict.cjs → generated/ecdict.ts）。
 const CEFR_WORDS: Word[] = (() => {
   const raw: Word[] = [...PRE_A1, ...A1, ...A2, ...B1, ...B2]
   const seen = new Set<string>()
@@ -112,9 +127,6 @@ const cefrMerged: Word[] = CEFR_WORDS.map((w) => {
     category: categoryOf(w.word),
     common: isCommon(w.word),
   }
-  // 早期主库文件里少数词条带 extended 标记，扩展包移除后该标记已无意义，
-  // 统一剥掉，避免词库 / SQL 里残留 extended=1 的行。
-  delete word.extended
   return word
 })
 
@@ -127,15 +139,21 @@ for (const g of PEP_GRADE_ORDER) {
     if (cefrKeys.has(key)) continue // CEFR 库已有，跳过
     if (pepWordToGrade.get(key) !== g) continue // 不是首次出现的年级
     if (/\s|,/.test(pw.en)) continue // 过滤 PEP 教材中的多词短语
+    // 缩写、缩略形式、屈折变体、专有名词不进课程词表（查词仍可命中词典层）
+    if (isJunkWord(pw.en, pw.zh || '')) continue
+
     const enrich = PEP_ENRICH[pw.en]
+    // 主词库映射查不到时会落到 thinking 兜底，这时用中文释义再猜一次场景
+    const baseCat = categoryOf(pw.en)
+    const cat = baseCat === 'thinking' ? (guessScene(pw.zh || '', '') ?? baseCat) : baseCat
     pepOnlyWords.push({
       word: pw.en,
       level: GRADE_DEFAULT_LEVEL[g] ?? 'A1',
       ipa: enrich?.ipa || pw.phonetic,
-      pos: '',
+      pos: POS_OVERRIDE[norm(pw.en)] ?? '',
       meaning: pw.zh || pw.en,
       examples: enrich?.examples ?? [],
-      category: categoryOf(pw.en),
+      category: cat,
       pepOnly: true,
       grade: g,
     })
@@ -159,19 +177,68 @@ const idiomsWithGrade: Word[] = IDIOMS.map((w) => ({
   common: isCommon(w.word),
 }))
 
+// Step 7: ECDICT 核心词（牛津 / 考纲词）——随主包加载，参与学习与晋级
+const ecdictCore: Word[] = (() => {
+  const seen = new Set<string>([...cefrKeys, ...pepOnlyUnique.map((w) => norm(w.word))])
+  const out: Word[] = []
+  for (const w of ECDICT_CORE) {
+    const k = norm(w.word)
+    if (!k || seen.has(k)) continue
+    // 缩写 / 符号 / 人名地名 / 屈折变体不进课程词表
+    if (isJunkWord(w.word, w.meaning)) continue
+    seen.add(k)
+    out.push({
+      ...w,
+      // 缺词性的正常词用覆盖表补上
+      pos: POS_OVERRIDE[k] ?? w.pos,
+      // ECDICT 词没有场景分类：先按释义规则猜，猜不到再回退到默认兜底
+      category: w.category ?? guessScene(w.meaning, w.pos) ?? categoryOf(w.word),
+      common: isCommon(w.word),
+      examples: ECDICT_EXAMPLES[w.word] ?? ECDICT_EXAMPLES_BY_NORM.get(k) ?? w.examples ?? [],
+    })
+  }
+  return out
+})()
+
 /**
- * ALL_WORDS — 当前生效的统一词库（CEFR 主库 + PEP 教材专有词 + 常用短语）。
- * 每个词同时携带 grade（中式）与 level（西式）；CEFR 词优先，PEP 专有词补充，IDIOMS 独立。
- * COCA 扩展包暂未并入（见 Step 1 注释），本层即学习 / 浏览 / 复习 / 查词的唯一词库。
+ * CORE_WORDS — 课程词表（CEFR 主库 + PEP 教材专有词 + ECDICT 核心词 + 常用短语）。
+ * 每个词同时携带 grade（中式）与 level（西式）；这是学习 / 进度 / 晋级的口径。
  *
  * 例句在此统一过滤消极语境并按积极度排序（见 lib/positiveExamples.ts）：
  * 这样词卡、词详情、点词弹层、复习闪卡、闯关提示拿到的都是同一份积极向上的例句，
  * 也无需改动上游自动生成的大量词库源文件。
  */
-export const ALL_WORDS: Word[] = [...cefrMerged, ...pepOnlyUnique, ...idiomsWithGrade].map((w) => ({
-  ...w,
-  examples: positiveExamples(w.examples),
-}))
+export const CORE_WORDS: Word[] = [...cefrMerged, ...pepOnlyUnique, ...ecdictCore, ...idiomsWithGrade].map((w) => {
+  // 手写例句（batch-me-*）已逐条人工审核语义与语境，直接采用，不再走消极过滤。
+  // 对原本就手写过的词：用它整体替换源例句；对只补了第 2 条的词：与源例句合并去重。
+  const manual = MANUAL_EXAMPLES[norm(w.word)]
+  if (manual && manual.length) {
+    // 手写例句已逐条人工审核，直接采用；若不足 2 条，用过滤后的源例句补齐
+    const source = positiveExamples(w.examples, { meaning: w.meaning })
+    const seen = new Set<string>()
+    const merged: typeof manual = []
+    for (const e of [...manual, ...source]) {
+      const key = e.en.trim().toLowerCase()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      merged.push(e)
+    }
+    return { ...w, examples: merged.slice(0, 3) }
+  }
+  return {
+    ...w,
+    examples: positiveExamples(w.examples, { meaning: w.meaning }),
+  }
+})
+
+/**
+ * ALL_WORDS — 词典全量（课程词表 + 词典扩展词）。
+ *
+ * 扩展词（ECDICT 按词频补充的约 1.9 万词）不打包进首屏，由 data/lexicon.ts
+ * 在空闲时动态 import 后 **原地追加** 到这个数组里，因此查词 / 搜索会自动覆盖它们，
+ * 而学习、进度、晋级始终只看 CORE_WORDS。
+ */
+export const ALL_WORDS: Word[] = [...CORE_WORDS]
 
 /* ----------------------------- 场景分组 ----------------------------- */
 
@@ -241,25 +308,38 @@ export const LEVELS: LevelMeta[] = [
   { id: 'A2', label: 'A2', desc: '进阶 · 表达更丰富', accent: 'violet' },
   { id: 'B1', label: 'B1', desc: '中级 · 独立运用', accent: 'amber' },
   { id: 'B2', label: 'B2', desc: '中高级 · 流利表达', accent: 'rose' },
+  { id: 'C1', label: 'C1', desc: '高级 · 熟练驾驭', accent: 'indigo' },
 ]
 
-const COUNT: Record<Level, number> = { 'Pre-A1': 0, A1: 0, A2: 0, B1: 0, B2: 0 }
+const COUNT: Record<Level, number> = { 'Pre-A1': 0, A1: 0, A2: 0, B1: 0, B2: 0, C1: 0 }
+const COUNT_CORE: Record<Level, number> = { 'Pre-A1': 0, A1: 0, A2: 0, B1: 0, B2: 0, C1: 0 }
 const GRADE_COUNT: Record<GradeRung, number> = {
   primary: 0, g7: 0, g8: 0, g9: 0, g10: 0, g11: 0, g12: 0,
   cet4: 0, cet6: 0, kaoyan: 0,
 }
-for (const w of ALL_WORDS) {
+const GRADE_COUNT_CORE: Record<GradeRung, number> = {
+  primary: 0, g7: 0, g8: 0, g9: 0, g10: 0, g11: 0, g12: 0,
+  cet4: 0, cet6: 0, kaoyan: 0,
+}
+// 计数只统计课程词表；扩展词由 data/lexicon.ts 动态加载，不参与学习口径
+for (const w of CORE_WORDS) {
   COUNT[w.level]++
-  if (w.grade) GRADE_COUNT[w.grade]++
+  COUNT_CORE[w.level]++
+  if (w.grade) {
+    GRADE_COUNT[w.grade]++
+    GRADE_COUNT_CORE[w.grade]++
+  }
 }
 
-export function countByLevel(level: Level): number {
-  return COUNT[level]
+export function countByLevel(level: Level, scope: 'all' | 'core' = 'all'): number {
+  // 两个口径目前都只含课程词表（扩展词是词典层，不计入任何学习统计）
+  return scope === 'core' ? COUNT_CORE[level] : COUNT[level]
 }
 
-export function countByGrade(grade: GradeRung): number {
-  return GRADE_COUNT[grade] ?? 0
+export function countByGrade(grade: GradeRung, scope: 'all' | 'core' = 'all'): number {
+  return (scope === 'core' ? GRADE_COUNT_CORE[grade] : GRADE_COUNT[grade]) ?? 0
 }
 
-/** 词库总词数（进度分母 / 晋级门槛 / 查词覆盖范围一致） */
-export const TOTAL = ALL_WORDS.length
+/** 课程词表词数（学习 / 进度 / 晋级口径）；ALL_WORDS 会在扩展词加载后变大，故不用它 */
+export const TOTAL = CORE_WORDS.length
+export const TOTAL_CORE = CORE_WORDS.length

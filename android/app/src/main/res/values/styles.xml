@@ -23,7 +23,7 @@
     </style>
 
     <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
-        <item name="android:background">@drawable/splash</item>
+        <item name="android:background">@color/appCanvas</item>
         <!-- 启动页结束后回到真正的主界面主题，否则会一直停留在 Splash 主题 -->
         <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
         <item name="android:statusBarColor">@color/appCanvas</item>

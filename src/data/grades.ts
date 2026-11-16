@@ -123,7 +123,7 @@ export function wordsByGrade(): Record<GradeId, Word[]> {
           ipa: enrich?.ipa || pw.phonetic,
           pos: '',
           meaning: pw.zh || en,
-          examples: positiveExamples(enrich?.examples),
+          examples: positiveExamples(enrich?.examples, { meaning: pw.zh || en }),
           category: categoryOf(en),
           pepOnly: true,
           grade: g.id,

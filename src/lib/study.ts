@@ -1,4 +1,5 @@
-import { ALL_WORDS } from '../data'
+import { ALL_WORDS, CORE_WORDS } from '../data'
+import { getLexiconVersion } from '../data/lexicon'
 import { GRADES, wordsByGrade, type GradeId } from '../data/grades'
 import type { Level, Word } from '../data/types'
 import { wordKey } from './cluster'
@@ -148,8 +149,17 @@ export function goodIntervalDays(key: string): number {
   return BOX_INTERVALS_DAYS[nextBox]
 }
 
-export function getDueCount(now = Date.now()): number {
-  return Object.values(readRecords()).filter((r) => r.seen > 0 && r.dueAt <= now).length
+/**
+ * 到期复习的词数。
+ * 复习队列只放「已掌握」的词，所以传入 masteredSet 时只统计其中的到期词；
+ * 不传则统计全部有记录的词（仅调试用）。
+ */
+export function getDueCount(now = Date.now(), masteredSet?: Set<string>): number {
+  const records = readRecords()
+  const mastered = masteredSet ? new Set([...masteredSet].map(wordKey)) : null
+  return Object.values(records).filter(
+    (r) => r.seen > 0 && r.dueAt <= now && (!mastered || mastered.has(r.key)),
+  ).length
 }
 
 /** 今天碰过的词数（同一个词重复判断只算一个）。 */
@@ -172,6 +182,8 @@ export function clearStudyRecords(): void {
 
 let pepCache: Word[] | null = null
 let indexCache: Map<string, Word> | null = null
+/** 索引对应的词典版本：扩展词懒加载完成后需要重建 */
+let indexVersion = -1
 
 /** 人教全年级词表（按规范化键去重，保留首次出现的年级）。 */
 function pepWords(): Word[] {
@@ -190,7 +202,8 @@ function pepWords(): Word[] {
 
 /** CEFR / 人教合并索引：错词本里的词即使来自人教专有词也能补全释义与例句。 */
 function studyIndex(): Map<string, Word> {
-  if (indexCache) return indexCache
+  const version = getLexiconVersion()
+  if (indexCache && indexVersion === version) return indexCache
   const map = new Map<string, Word>()
   for (const w of ALL_WORDS) map.set(wordKey(w.word), w)
   const byGrade = wordsByGrade()
@@ -203,6 +216,7 @@ function studyIndex(): Map<string, Word> {
     }
   }
   indexCache = map
+  indexVersion = version
   return map
 }
 
@@ -266,7 +280,8 @@ export function buildStudySession(opts: StudyBuildOptions): StudyCard[] {
     return review.slice(0, limit).map(reviewCard)
   }
 
-  const base = opts.source === 'pep' ? pepWords() : ALL_WORDS
+  // 背词只抽课程词表；用户主动标记过的词典扩展词会经 review 队列进入复习
+  const base = opts.source === 'pep' ? pepWords() : CORE_WORDS
   const scoped = base.filter((w) =>
     opts.scope === 'all'
       ? true
@@ -278,9 +293,22 @@ export function buildStudySession(opts: StudyBuildOptions): StudyCard[] {
   // 只复习已掌握的词：SRS 到期词优先，其次按最久未复习补位；
   // 每轮最多 limit 张，避免一次会话把全部已掌握词塞进来。
   if (opts.masteredOnly) {
-    const candidates = scoped
-      .filter((w) => opts.masteredSet.has(w.word))
-      .map((w) => ({ word: w, key: wordKey(w.word), rec: records[wordKey(w.word)] }))
+    const masteredKeys = new Set([...opts.masteredSet].map(wordKey))
+    const candidates: { word: Word; key: string; rec?: StudyRecord }[] = []
+    const picked = new Set<string>()
+    // 1) 当前范围词表里已掌握的词
+    for (const w of scoped) {
+      const key = wordKey(w.word)
+      if (!masteredKeys.has(key) || picked.has(key)) continue
+      picked.add(key)
+      candidates.push({ word: w, key, rec: records[key] })
+    }
+    // 2) 已掌握但不在范围词表里的词（查词时手动标记的扩展词，运行时才加载进总词库）同样可以复习
+    for (const [key, w] of studyIndex()) {
+      if (picked.has(key) || !masteredKeys.has(key)) continue
+      picked.add(key)
+      candidates.push({ word: w, key, rec: records[key] })
+    }
     // 无记录 = 从未复习（dueAt 视为 0），不能把它当成「已到期」抢在真正到期词前面。
     const rank = (rec?: StudyRecord): number => {
       if (!rec || rec.seen === 0) return 1

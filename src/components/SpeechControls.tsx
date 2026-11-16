@@ -23,10 +23,10 @@ export function SpeechControls({
   const active = queue.playing
 
   const chip = (on: boolean) =>
-    `rounded-full px-2.5 py-1 text-[11px] font-semibold transition active:scale-95 ${
+    `rounded-full border px-2.5 py-1 text-[11px] font-semibold transition active:scale-95 ${
       on
-        ? 'bg-slate-900 text-white shadow-sm dark:bg-white dark:text-slate-900'
-        : 'text-slate-500 hover:bg-slate-900/5 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100'
+        ? 'border-brand-400/70 bg-brand-50 text-brand-700 shadow-sm dark:border-brand-400/45 dark:bg-brand-400/20 dark:text-brand-100'
+        : 'border-transparent text-slate-500 hover:bg-slate-900/5 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100'
     }`
 
   return (

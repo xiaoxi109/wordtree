@@ -163,4 +163,46 @@ describe('背词组卡', () => {
     })
     expect(session[0].word).toBe(late.word)
   })
+
+  it('masteredOnly：错词本里的未掌握词与新词都不会混进复习牌堆', () => {
+    const a1 = ALL_WORDS.filter((w) => w.level === 'A1')
+    const mastered = new Set([a1[0].word, a1[1].word])
+    // 未掌握的词进了错词本
+    pushReviewWord(
+      { key: wordKey(a1[2].word), word: a1[2].word, ipa: a1[2].ipa, meaning: a1[2].meaning },
+      'unknown',
+    )
+
+    const session = buildStudySession({
+      source: 'cefr',
+      scope: 'A1',
+      wrongOnly: false,
+      masteredSet: mastered,
+      masteredOnly: true,
+      limit: 20,
+      now: NOW,
+    })
+    expect(session.length).toBeGreaterThan(0)
+    expect(session.every((c) => mastered.has(c.word))).toBe(true)
+    expect(session.some((c) => c.word === a1[2].word)).toBe(false)
+    expect(session.some((c) => c.stage === 'wrong')).toBe(false)
+    expect(session.some((c) => c.stage === 'new')).toBe(false)
+  })
+})
+
+describe('到期统计口径', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    clearReviewWords()
+    clearStudyRecords()
+  })
+
+  it('传入 masteredSet 时只统计已掌握的到期词', () => {
+    applyStudyGrade(wordKey(first.word), 'good', NOW)
+    applyStudyGrade(wordKey(second.word), 'good', NOW)
+
+    expect(getDueCount(NOW + DAY)).toBe(2)
+    expect(getDueCount(NOW + DAY, new Set([first.word]))).toBe(1)
+    expect(getDueCount(NOW + DAY, new Set())).toBe(0)
+  })
 })

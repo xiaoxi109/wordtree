@@ -162,7 +162,7 @@ export default function SentenceView({ active = true }: { active?: boolean }) {
             <button
               type="button"
               onClick={() => setFilterOpen(false)}
-              className="flex-[1.4] rounded-[18px] bg-slate-900 py-3 text-sm font-semibold text-white shadow-float dark:bg-white dark:text-slate-900"
+              className="btn-ink flex-[1.4] !py-3 text-sm"
             >
               查看结果
             </button>
@@ -218,7 +218,7 @@ function FilterChip({
       aria-pressed={active}
       className={`rounded-full px-3 py-2 text-[13px] font-semibold transition active:scale-95 ${
         active
-          ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900'
+          ? 'border border-brand-400/70 bg-brand-50 text-brand-700 shadow-sm dark:border-brand-400/45 dark:bg-brand-400/20 dark:text-brand-100'
           : 'border border-slate-200/70 bg-white/60 text-slate-600 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300'
       }`}
     >

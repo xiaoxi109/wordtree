@@ -4,6 +4,7 @@ import type { CategoryId, Level, Word } from '../data'
 import type { GradeRung, LevelRung, Route } from '../data/levels'
 import { rungToFilters } from '../data/levels'
 import { FilterBar, WordGrid } from '../components/word'
+import { useLexiconVersion } from '../hooks/useLexicon'
 import { useDisplayMode } from '../components/display'
 import { countPos, matchesPos, type PosId } from '../lib/pos'
 
@@ -55,7 +56,6 @@ export default function BrowseView({
   const [levelFilter, setLevelFilter] = useState<Level | 'all'>(initialLevelFilter)
   const [gradeFilter, setGradeFilter] = useState<GradeRung | 'all'>(initialGradeFilter)
   const [catFilter, setCatFilter] = useState<CategoryId | 'all'>('all')
-  const [commonOnly, setCommonOnly] = useState(false)
   const [showUnmastered, setShowUnmastered] = useState(true)
   const [showMastered, setShowMastered] = useState(false)
   const [search, setSearch] = useState('')
@@ -73,32 +73,53 @@ export default function BrowseView({
     prevRungDefault.current = rungDefault
   }, [rungDefault])
 
+  // 词典扩展词是懒加载的：加载完成后 +1，这里重新取一次全量
+  const lexV = useLexiconVersion()
   const scope = useMemo(
     () => (level ? ALL_WORDS.filter((w) => w.level === level) : ALL_WORDS),
-    [level],
+    [level, lexV],
   )
 
-  // 双轨等级筛选：route === 'level' 用 levelFilter；route === 'grade' 用 gradeFilter
+  const q = search.trim().toLowerCase()
+  const searching = q.length > 0
+
+  // 查词与浏览共用同一个入口，但行为要分清：
+  // - 输入关键词 → 覆盖全词库、忽略全部筛选，保证任何已学/未学、任何等级的词都能查到；
+  // - 清空关键词 → 回到当前词表 + 用户设定的筛选条件浏览。
   const base = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return scope.filter((w) => {
-      if (route === 'level') {
-        if (levelFilter !== 'all' && w.level !== levelFilter) return false
-      } else {
-        if (gradeFilter !== 'all' && w.grade !== gradeFilter) return false
+    const pool = searching ? ALL_WORDS : scope
+    return pool.filter((w) => {
+      if (!searching) {
+        if (route === 'level') {
+          if (levelFilter !== 'all' && w.level !== levelFilter) return false
+        } else {
+          if (gradeFilter !== 'all' && w.grade !== gradeFilter) return false
+        }
+        // 浏览只列课程词表；词典扩展词通过搜索/点词覆盖（避免一屏两万生僻词）
+        if (w.tier === 'extra') return false
+        if (catFilter !== 'all' && (w.category ?? 'thinking') !== catFilter) return false
+        if (!showUnmastered && !showMastered) return false
+        if (!showUnmastered && showMastered && !masteredSet.has(w.word)) return false
+        if (showUnmastered && !showMastered && masteredSet.has(w.word)) return false
+        return true
       }
-      if (catFilter !== 'all' && (w.category ?? 'thinking') !== catFilter) return false
-      if (commonOnly && !w.common) return false
-      if (!showUnmastered && !showMastered) return false
-      if (!showUnmastered && showMastered && !masteredSet.has(w.word)) return false
-      if (showUnmastered && !showMastered && masteredSet.has(w.word)) return false
-      if (!q) return true
       return w.word.toLowerCase().includes(q) || w.meaning.includes(q) || w.ipa.toLowerCase().includes(q)
     })
-  }, [scope, route, levelFilter, gradeFilter, catFilter, commonOnly, showUnmastered, showMastered, masteredSet, search])
+  }, [scope, searching, q, route, levelFilter, gradeFilter, catFilter, showUnmastered, showMastered, masteredSet])
 
-  const filtered = useMemo(() => base.filter((w) => matchesPos(w, posFilter)), [base, posFilter])
+  const filtered = useMemo(
+    () => (searching ? base : base.filter((w) => matchesPos(w, posFilter))),
+    [base, posFilter, searching],
+  )
   const posCounts = useMemo(() => countPos(base), [base])
+
+  // 筛选条件签名（不含掌握状态）：只有筛选变化才重置列表的渐进加载批次
+  const resetKey = [
+    levelFilter, gradeFilter, catFilter,
+    showUnmastered, showMastered,
+    search.trim().toLowerCase(),
+    Array.from(posFilter).sort().join(','),
+  ].join('|')
 
   return (
     <>
@@ -110,8 +131,6 @@ export default function BrowseView({
         setGradeFilter={(v) => setGradeFilter(v as GradeRung | 'all')}
         catFilter={catFilter}
         setCatFilter={setCatFilter}
-        commonOnly={commonOnly}
-        setCommonOnly={setCommonOnly}
         search={search}
         setSearch={setSearch}
         showMasterChips
@@ -126,14 +145,16 @@ export default function BrowseView({
         posCounts={posCounts}
       />
 
-      {/* fixed 的 PageBar(~56px) 已由 main mt-[56px] 让开；FilterBar(~72px) 需额外让开 */}
-      <div className="pt-[76px]">
+      {/* fixed 的 PageBar(~56px) 已由 main mt-[56px] 让开；
+          FilterBar 含搜索行 + 掌握/显示语言常驻行（约 100px）需额外让开 */}
+      <div className="pt-[116px]">
         <WordGrid
           words={filtered}
           masteredSet={masteredSet}
           mode={displayMode}
           onOpen={onOpen}
           onToggleMastered={onToggleMastered}
+          resetKey={resetKey}
         />
       </div>
     </>

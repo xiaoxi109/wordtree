@@ -4,6 +4,7 @@ import { StatusBar, Style } from '@capacitor/status-bar'
 import { App as CapApp } from '@capacitor/app'
 import { runBack } from './lib/back'
 import { LEVELS, ALL_WORDS } from './data'
+import { ensureExtraLoaded } from './data/lexicon'
 import type { Level, Word } from './data'
 import { GRADES, type GradeId } from './data/grades'
 import {
@@ -25,9 +26,15 @@ import StudyView from './views/StudyView'
 import SentenceView from './views/SentenceView'
 import AiView from './views/AiView'
 import ChallengesView from './views/ChallengesView'
+import PhonicsView from './views/PhonicsView'
 import { WordModal } from './components/word'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { AdvancementQuiz } from './components/AdvancementQuiz'
 import { checkAdvancement } from './lib/advancement'
+import { pushReviewWord, removeReviewWord } from './lib/review'
+import { lookupWord, type DictEntry } from './lib/dict'
+import { wordKey } from './lib/cluster'
+
 import { ArrowLeftIcon, HomeIcon, SparklesIcon, UserIcon, CheckIcon, XIcon } from './components/icons'
 import { PageActiveContext } from './components/Sheet'
 
@@ -36,14 +43,13 @@ type Theme = 'light' | 'dark'
 
 /**
  * 全局页面栈只承载全屏沉浸式二级页：
- * 大模型设置、我的等级、等级词表、年级词表、搜索、AI 课程阅读、闯关晋级、
- * 背词浏览（BrowseView 全场景）、复习（StudyView）。
+ * 大模型设置、我的等级、等级词表、年级词表、AI 课程阅读、闯关晋级、
+ * 词库（BrowseView，浏览与查词共用同一入口）、复习（StudyView）。
  * 生成条件 / 课程集操作等轻量交互用底部 Sheet / ActionSheet，不进栈。
  */
 type Page =
   | { kind: 'llm' }
   | { kind: 'rung' }
-  | { kind: 'search' }
   | { kind: 'level'; level: Level }
   | { kind: 'grade'; grade: GradeId }
   | { kind: 'browse-all' }
@@ -52,6 +58,7 @@ type Page =
   | { kind: 'ai-reader'; lessonId: string }
   | { kind: 'quiz' }
   | { kind: 'challenge' }
+  | { kind: 'phonics' }
 
 /**
  * AI 课程在 Web 与原生端都开放；Web 端能否请求成功取决于接口是否允许跨域，
@@ -163,6 +170,12 @@ export default function App() {
     })
   }, [])
 
+  // 词典扩展词（约 1.9 万）延迟加载：首屏只带课程词表，空闲后再并入，查词随即覆盖全库
+  useEffect(() => {
+    const id = window.setTimeout(() => { void ensureExtraLoaded() }, 1200)
+    return () => window.clearTimeout(id)
+  }, [])
+
   // 首次进入首页、闯关成功、完成一轮复习 → 都算"今日学习"
   useEffect(() => {
     recordStudyDay()
@@ -209,6 +222,11 @@ export default function App() {
     })
   }, [])
 
+  /** 列表连播切篇：替换栈顶，避免每切一篇就在返回栈里多压一层 */
+  const replaceTopPage = useCallback((page: Page) => {
+    setPages((prev) => (prev.length ? [...prev.slice(0, -1), page] : [page]))
+  }, [])
+
   /**
    * AI 课程阅读页走同一条页面栈，由栈顶驱动 AiView 显示阅读器；返回一律 popPage。
    * 轻量交互（生成条件 / 课程集操作 / 听单切换）留在 AiView 内部处理，不入栈。
@@ -232,6 +250,11 @@ export default function App() {
   }, [])
 
   const masteredSet = useMemo(() => new Set(masteredArr), [masteredArr])
+  /** 闯关用：已掌握的词补全成词条（释义 / 音标） */
+  const masteredWords = useMemo(
+    () => masteredArr.map((w) => lookupWord(w)).filter((w): w is DictEntry => !!w),
+    [masteredArr],
+  )
   const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), [])
 
   // App 启动即预加载 Piper 模型（不播放）。模型尽早就绪，可使后续用户手势内的
@@ -253,7 +276,18 @@ export default function App() {
     })
   }, [recordStudyDay])
 
-  /** 批量增删掌握词（AI 教程点词三态回流 / 导入进度）。 */
+  /**
+   * 查词弹层的二态切换：加入已掌握时移出复习队列；取消已掌握时按「未掌握」记入复习队列，
+   * 后续 AI 课程会重点复现。等价于原先的「加入已掌握 / 加入未掌握」两个按钮。
+   */
+  const toggleMasteredFromModal = useCallback((w: Word) => {
+    const willBeMastered = !masteredSet.has(w.word)
+    toggleMastered(w.word)
+    if (willBeMastered) removeReviewWord(wordKey(w.word))
+    else pushReviewWord({ key: wordKey(w.word), word: w.word, ipa: w.ipa, meaning: w.meaning }, 'unknown')
+  }, [masteredSet, toggleMastered])
+
+  /** 批量增删掌握词（复习判级回流 / 导入进度）。 */
   const applyMastered = useCallback((words: string[], mode: 'add' | 'remove') => {
     setMasteredArr((prev) => {
       const next = new Set(prev)
@@ -282,13 +316,13 @@ export default function App() {
     // 与 index.html 的内联初始化同步，避免系统深色 + 应用浅色时原生控件混色。
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
     localStorage.setItem('lexicore-theme', theme)
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0e100c' : '#f6f3ea')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#121a15' : '#f6f3ea')
 
     // Android 状态栏跟随应用内主题：深色→浅色图标，浅色→深色图标。
     // 失败时静默忽略（Web 端 / 旧系统不支持）。
     if (Capacitor.isNativePlatform()) {
       StatusBar.setStyle({ style: dark ? Style.Dark : Style.Light }).catch(() => {})
-      StatusBar.setBackgroundColor({ color: dark ? '#0e100c' : '#f6f3ea' }).catch(() => {})
+      StatusBar.setBackgroundColor({ color: dark ? '#121a15' : '#f6f3ea' }).catch(() => {})
     }
   }, [theme])
 
@@ -320,12 +354,14 @@ export default function App() {
   const activeWords = useMemo(() => {
     const grades = activeGrades(route, currentRung)
     return ALL_WORDS.filter((w) => {
+      // 闯关游戏只用课程词表，避免出现词典里的生僻词
+      if (w.tier === 'extra') return false
       if (route === 'level') return activeLevelsList.includes(w.level)
       return !!(w.grade && grades.includes(w.grade))
     })
   }, [route, activeLevelsList, currentRung])
 
-  /** 晋级检测：当前激活窗口内全部掌握 + 有下一级可去 */
+  /** 晋级检测：课程词表达到掌握门槛（低等级 100%，大等级按比例 + 上限）且有下一级可去 */
   const advancement = useMemo(
     () => checkAdvancement(route, currentRung, new Set(masteredArr)),
     [route, currentRung, masteredArr],
@@ -345,6 +381,15 @@ export default function App() {
     if (!levelRung || levelRung === 'C1' || levelRung === 'C2') return null
     return levelRung as Level
   }, [advancement.nextRung, route, activeLevelsList])
+
+  /** 设置里「我的等级」对应的 CEFR 等级（C1/C2 超出词库上限，按 B2 计） */
+  const myAiLevel = useMemo<Level | null>(() => {
+    const l = route === 'grade'
+      ? gradeToLevel(currentRung as GradeRung)
+      : (currentRung as LevelRung)
+    if (!l) return null
+    return l === 'C2' ? 'B2' : l
+  }, [route, currentRung])
 
   // 安卓系统返回键：先交给弹层 / 阅读器，再逐层退页面栈，然后回首页，最后退出应用
   useEffect(() => {
@@ -381,8 +426,6 @@ export default function App() {
         return { title: '大模型设置', sub: '' }
       case 'rung':
         return { title: '我的等级', sub: '' }
-      case 'search':
-        return { title: '搜索单词', sub: '全部分级词库' }
       case 'level': {
         const l = LEVELS.find((x) => x.id === page.level)!
         return { title: `西式 ${l.label}`, sub: l.desc }
@@ -392,9 +435,9 @@ export default function App() {
         return { title: g.label, sub: g.desc }
       }
       case 'browse-all':
-        return { title: '全部词库', sub: '按场景分组 · 可叠加等级 / 词性筛选' }
+        return { title: '词库', sub: '背词 · 查词 · 按场景分组与筛选' }
       case 'study':
-        return { title: '复习', sub: '间隔重复队列 · 到期即练' }
+        return { title: '复习', sub: '只练已掌握的词 · 到期即练' }
       case 'sentences':
         return { title: '短句', sub: '按使用场景分类 · 中文想，英文说' }
       case 'ai-reader':
@@ -403,6 +446,8 @@ export default function App() {
         return { title: '晋级闯关', sub: '抽检当前级单词 · 通过可晋级' }
       case 'challenge':
         return { title: '闯关', sub: '' }
+      case 'phonics':
+        return { title: '自然拼读 · 音标', sub: '音标表 · 拼读规则 · 听辨练习' }
     }
   }, [pages])
 
@@ -417,16 +462,6 @@ export default function App() {
             currentRung={currentRung}
             setCurrentRung={setCurrentRung}
             onDone={popPage}
-          />
-        )
-      case 'search':
-        return (
-          <BrowseView
-            route={route}
-            masteredSet={masteredSet}
-            onOpen={openWord}
-            onToggleMastered={(w) => toggleMastered(w.word)}
-            activeLevels={activeLevelsList}
           />
         )
       case 'browse-all':
@@ -498,9 +533,15 @@ export default function App() {
         return (
           <ChallengesView
             activeWords={activeWords}
-            onExit={popPage}
+            masteredWords={masteredWords}
+            onMaster={(w) => {
+              // 闯关答对 → 标记为已掌握（已在掌握列表里的不动）
+              if (!masteredSet.has(w.word)) toggleMastered(w.word)
+            }}
           />
         )
+      case 'phonics':
+        return <PhonicsView active={pages[pages.length - 1]?.kind === 'phonics'} />
     }
   }
 
@@ -508,7 +549,7 @@ export default function App() {
     <div
       id="app-scroll"
       ref={rootScrollRef}
-      className={`h-[100dvh] overflow-y-auto bg-transparent text-slate-900 transition-colors ${theme === 'dark' ? 'dark' : ''}`}
+      className={`h-[100dvh] overflow-y-auto bg-transparent text-slate-900 transition-colors dark:text-slate-100 ${theme === 'dark' ? 'dark' : ''}`}
     >
       <main
         className={`mx-auto max-w-5xl px-4 pt-[calc(env(safe-area-inset-top)+16px)] ${
@@ -524,7 +565,7 @@ export default function App() {
         {/* 二级 / 三级页面：顶部返回栏 fixed 吸顶，搜索/筛选 FilterBar 接着吸在下方 */}
         {pageMeta && (
           <div
-            className="fixed inset-x-0 top-[env(safe-area-inset-top)] z-30 border-b border-slate-900/[0.06] bg-[#f6f3ea]/95 backdrop-blur-xl dark:border-white/10 dark:bg-[#0e100c]/95"
+            className="fixed inset-x-0 top-[env(safe-area-inset-top)] z-30 border-b border-slate-900/[0.06] bg-[#f6f3ea]/95 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/95"
           >
             <div className="mx-auto max-w-5xl px-4 pb-2 pt-3">
               <div className="flex items-center gap-2.5">
@@ -556,12 +597,13 @@ export default function App() {
                 currentRung={currentRung}
                 activeLevels={activeLevelsList}
                 canAdvance={advancement.canAdvance}
+                advanceAvailable={!!advancement.nextRung}
                 onOpenBrowse={() => pushPage({ kind: 'browse-all' })}
                 onOpenSentences={() => pushPage({ kind: 'sentences' })}
                 onOpenStudy={() => pushPage({ kind: 'study' })}
-                onOpenSearch={() => pushPage({ kind: 'search' })}
                 onStartQuiz={() => pushPage({ kind: 'quiz' })}
                 onOpenChallenges={() => pushPage({ kind: 'challenge' })}
+                onOpenPhonics={() => pushPage({ kind: 'phonics' })}
                 streak={streak}
               />
             )}
@@ -573,14 +615,16 @@ export default function App() {
             {visited.has('ai') && (
               <AiView
                 masteredSet={masteredSet}
-                onApplyMark={applyMastered}
+                onOpenWord={openWord}
                 onToast={pushToast}
                 active={view === 'ai'}
                 readerLessonId={aiReaderLessonId}
                 onOpenReader={(lessonId) => pushPage({ kind: 'ai-reader', lessonId })}
+                onSwitchReader={(lessonId) => replaceTopPage({ kind: 'ai-reader', lessonId })}
                 onBack={popPage}
                 activeLevels={activeLevelsList}
                 targetLevel={aiTargetLevel}
+                myLevel={myAiLevel}
                 route={route}
                 currentRung={currentRung}
               />
@@ -614,7 +658,9 @@ export default function App() {
         {pages.map((page, i) => (
           <PageActiveContext.Provider key={i} value={i === pages.length - 1}>
             <div className={i === pages.length - 1 ? '' : 'hidden'}>
-              {renderPage(page)}
+              <ErrorBoundary resetKey={`${i}-${page.kind}`} onReset={popPage}>
+                {renderPage(page)}
+              </ErrorBoundary>
             </div>
           </PageActiveContext.Provider>
         ))}
@@ -623,7 +669,7 @@ export default function App() {
       {/* 底部通栏导航：整条贴着屏幕底边固定，二级页内隐藏 */}
       {!pageMeta && (
         <nav
-          className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-900/[0.08] bg-[#f6f3ea]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl dark:border-white/10 dark:bg-[#0e100c]/95"
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-900/[0.08] bg-[#f6f3ea]/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/95"
           aria-label="底部导航"
         >
           <div className="mx-auto flex h-[58px] max-w-5xl items-stretch px-1">
@@ -646,7 +692,7 @@ export default function App() {
           mastered={masteredSet.has(wordModalStack[wordModalStack.length - 1].word)}
           onClose={closeWordModal}
           onPop={wordModalStack.length > 1 ? popWordModal : undefined}
-          onToggleMastered={() => toggleMastered(wordModalStack[wordModalStack.length - 1].word)}
+          onToggleMastered={() => toggleMasteredFromModal(wordModalStack[wordModalStack.length - 1])}
           onOpenWord={(w) => openWord(w)}
         />
       )}

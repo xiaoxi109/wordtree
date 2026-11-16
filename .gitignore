@@ -37,6 +37,9 @@ tsc_err.log
 # Local build/data scripts
 scripts/
 
+# 词库原始数据（ECDICT 等大文件，不进仓库）
+.cache/
+
 # CodeBuddy IDE tool config
 .codebuddy/
 

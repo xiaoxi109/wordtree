@@ -49,6 +49,12 @@ describe('buildMasteredPool', () => {
   it('空掌握集返回空池', () => {
     expect(buildMasteredPool(new Set()).length).toBe(0)
   })
+
+  it('掌握记录有大小写/空格差异时仍能匹配到词条', () => {
+    const sample = ALL_WORDS.find((w) => /^[a-z]+$/.test(w.word))!
+    const pool = buildMasteredPool(new Set([`  ${sample.word.toUpperCase()}  `]))
+    expect(pool.some((p) => p.key === wordKey(sample.word))).toBe(true)
+  })
 })
 
 describe('clusterWords 不变量', () => {

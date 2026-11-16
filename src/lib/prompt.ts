@@ -6,13 +6,12 @@ import {
   GRADE_RUNGS,
   LEVEL_RUNGS,
   gradeToLevel,
-  levelToGrades,
   type GradeRung,
   type LevelRung,
   type Route,
 } from '../data/levels'
 
-export type Difficulty = 'adaptive' | 'A1' | 'A2' | 'B1' | 'B2'
+export type Difficulty = 'adaptive' | 'Pre-A1' | 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
 export type LessonKind = 'story' | 'dialogue' | 'diary' | 'email' | 'article' | 'poem'
 export type LessonFormatChoice = 'auto' | LessonKind
 
@@ -102,10 +101,12 @@ export interface LessonCondition {
 
 export const DIFFICULTIES: { id: Difficulty; label: string; hint: string }[] = [
   { id: 'adaptive', label: '自适应', hint: '句式难度贴合所选词汇的整体水平，自然流畅即可' },
+  { id: 'Pre-A1', label: 'Pre-A1', hint: 'Pre-A1 级句式：极短句，一次只表达一个信息，全部用一般现在时，只用最基础的词（I have a cat. / It is big. / I go to school.）' },
   { id: 'A1', label: 'A1', hint: 'A1 级句式：短句、现在时为主、结构简单（My name is… / I like…）' },
   { id: 'A2', label: 'A2', hint: 'A2 级句式：日常简单句与少量复合句，过去时和将来时可少量出现' },
   { id: 'B1', label: 'B1', hint: 'B1 级句式：中等复杂度，使用从句、连接词与更丰富的表达' },
   { id: 'B2', label: 'B2', hint: 'B2 级句式：更地道复杂的表达，允许习语与抽象论述' },
+  { id: 'C1', label: 'C1', hint: 'C1 级句式：长难句、从句嵌套、被动与虚拟语气、抽象与学术表达（词库上限为 B2，句子按 C1 复杂度组织，词汇仍取自已掌握词）' },
 ]
 
 export function difficultyHint(d: Difficulty): string {
@@ -121,9 +122,12 @@ export function difficultyHint(d: Difficulty): string {
 type ConcreteDifficulty = Exclude<Difficulty, 'adaptive'>
 
 function levelToDifficulty(level: LevelRung): ConcreteDifficulty {
-  if (level === 'Pre-A1' || level === 'A1') return 'A1'
+  if (level === 'Pre-A1') return 'Pre-A1'
+  if (level === 'A1') return 'A1'
   if (level === 'A2') return 'A2'
   if (level === 'B1') return 'B1'
+  if (level === 'C1') return 'C1'
+  // 词库无 C2 词：回落到 B2
   return 'B2'
 }
 
@@ -143,27 +147,46 @@ export function difficultyForRung(
   return level ? levelToDifficulty(level) : null
 }
 
-/** 按阶梯模式生成难度选项；中式路线下「我的等级」所在档直接用该年级名做标签。 */
-export function difficultyOptions(route: Route, currentRung?: GradeRung | LevelRung) {
-  const myDifficulty = currentRung ? difficultyForRung(route, currentRung) : null
-  const myLabel = route === 'grade'
-    ? GRADE_RUNGS.find((g) => g.id === currentRung)?.label
-    : undefined
-  return DIFFICULTIES.map((d) => {
-    const id = d.id
-    if (route !== 'grade' || id === 'adaptive') return d
-    const fallback = GRADE_RUNGS.find((g) => g.id === levelToGrades(id)[0])?.label
-    return { ...d, label: (id === myDifficulty && myLabel) || fallback || d.label }
-  })
+/** 难度选项：id 是选项唯一标识（CEFR 档位或年级 id），difficulty 是解析后的内部难度。 */
+export interface DifficultyOption {
+  id: string
+  difficulty: Difficulty
+  label: string
 }
 
-/** 难度值在界面上的显示名（自适应 / CEFR 等级 / 中式年级）。 */
-export function difficultyText(
+/** 按阶梯模式生成难度选项：西式每档一个 CEFR 等级；中式每个年级一档，与「我的等级」页一一对应。 */
+export function difficultyOptions(route: Route): DifficultyOption[] {
+  if (route !== 'grade') {
+    return DIFFICULTIES.map((d) => ({ id: d.id, difficulty: d.id, label: d.label }))
+  }
+  const opts: DifficultyOption[] = [{ id: 'adaptive', difficulty: 'adaptive', label: '自适应' }]
+  // 每个年级一档，与「我的等级」页完全一致（C2 不是年级，无需处理）
+  for (const g of GRADE_RUNGS) {
+    opts.push({ id: g.id, difficulty: levelToDifficulty(g.level), label: g.label })
+  }
+  return opts
+}
+
+/** 选项 id → 内部难度（自适应 / CEFR 档位）。 */
+export function resolveDifficulty(route: Route, id: string): Difficulty {
+  return difficultyOptions(route).find((d) => d.id === id)?.difficulty ?? 'adaptive'
+}
+
+/** 难度选项 id 在界面上的显示名（自适应 / CEFR 等级 / 中式年级）。 */
+export function difficultyText(route: Route, id: string): string {
+  return difficultyOptions(route).find((d) => d.id === id)?.label ?? '自适应'
+}
+
+/** 推荐难度对应的选项 id：中式路线推荐档覆盖多个年级时，优先取「我的等级」所在年级。 */
+export function recommendedOptionId(
   route: Route,
-  difficulty: Difficulty,
+  rec: Difficulty,
   currentRung?: GradeRung | LevelRung,
 ): string {
-  return difficultyOptions(route, currentRung).find((d) => d.id === difficulty)?.label ?? '自适应'
+  if (route !== 'grade') return rec
+  const hits = difficultyOptions(route).filter((d) => d.difficulty === rec && d.id !== 'adaptive')
+  if (hits.length === 0) return 'adaptive'
+  return hits.find((d) => d.id === currentRung)?.id ?? hits[0].id
 }
 
 export function outputFormat(kind: LessonKind): string {
@@ -172,7 +195,7 @@ export function outputFormat(kind: LessonKind): string {
   "title": "教程英文标题（简短）",
   "type": "${kind}",
   "segments": [
-    { "speaker": "对话角色名，非对话体裁留空字符串", "en": "英文正文", "zh": "对应的中文翻译" }
+    { "speaker": "对话角色名，非对话体裁留空字符串", "en": "英文正文", "zh": "纯中文翻译，不含任何标签或尖括号" }
   ]
 }`
 }
@@ -259,6 +282,8 @@ export function buildLessonMessages(
 5. 【重点词】下面每个词至少出现一次，并用 <w>标签</w> 包裹原文，例如：He <w>ordered</w> a salad。标签内保留实际词形（时态、单复数变化可以），其余正文不要出现任何标签。
 6. ${reviewWords.length ? `【复习词】${reviewWords.join(', ')} 请各重复出现 2-3 次（自然分布在不同段落/对话轮次）。` : '【复习词】无。'}
 7. 每个 segment 的 en 是英文原文，zh 是该段/该句的准确中文翻译（对话逐句翻译）。
+   【译文格式】zh 必须是纯中文文字，禁止出现任何标签、尖括号或重点词标记（不要写 <哥哥>、<w>哥哥</w> 之类）；
+   标签只允许出现在 en 字段里，用来标记英文重点词。
 8. type 必须是 "${kind}"。
 ${formatRules.map((r, i) => `${9 + i}. ${r}`).join('\n')}${formatRules.length ? '\n' : ''}
 重点词（${group.words.length} 个）：
@@ -272,13 +297,18 @@ ${outputFormat(kind)}`
   ]
 }
 
-/** 「测试连接」用的极简请求。 */
+/**
+ * 「测试连接」用的轻量请求。仍要求模型真正生成一段 JSON（而不是只回一个固定短串），
+ * 这样「推理型模型把正文留在思考里 / 输出被截断 / 不认 JSON 参数」能在测试阶段就暴露，
+ * 而不是等到生成课程时才报「内容为空」。
+ */
 export function buildTestMessages(): ChatMessage[] {
   return [
-    { role: 'system', content: '你是接口连通性检测器，只输出 JSON。' },
+    { role: 'system', content: '你是接口连通性检测器，只输出一个 JSON 对象，不要解释、前言或代码块。' },
     {
       role: 'user',
-      content: '请回复 {"ok": true, "hello": "你好"}，只输出 JSON，不要其他内容。',
+      content:
+        '请输出形如 {"ok": true, "sample": "..."} 的 JSON 对象，sample 里写一个不超过 12 个英文单词、关于猫的句子。只输出 JSON。',
     },
   ]
 }

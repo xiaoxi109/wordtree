@@ -45,6 +45,7 @@ function playViaWebAudio(
   onEnded?: () => void,
   setSpeakingFn?: (v: boolean) => void,
   url?: string,
+  onProgress?: (current: number, duration: number) => void,
 ): void {
   const revoke = () => {
     if (!url) return
@@ -75,13 +76,28 @@ function playViaWebAudio(
       src.playbackRate.value = rate
       src.connect(ctx!.destination)
       audioShared = src
+      // 兜底路径同样上报真实媒体进度：AudioContext 时钟 × 倍速 = 媒体秒
+      let tick: number | null = null
+      const stopTick = () => {
+        if (tick !== null) {
+          window.clearInterval(tick)
+          tick = null
+        }
+      }
       src.onended = () => {
+        stopTick()
         setSpeakingFn?.(false)
         if (audioShared === src) audioShared = null
         revoke()
         onEnded?.()
       }
+      const startedAt = ctx!.currentTime
       src.start(0)
+      if (onProgress) {
+        tick = window.setInterval(() => {
+          onProgress(Math.min(audioBuf.duration, (ctx!.currentTime - startedAt) * rate), audioBuf.duration)
+        }, 150)
+      }
     })
     .catch((e) => {
       console.error('Web Audio 播放失败:', e)
@@ -240,6 +256,14 @@ function stopCurrentAudio(): void {
   }
 }
 
+/**
+ * 停止共享音频通道里的声音（音标小音频这类不经 TTS 的音频）。
+ * Web 端的 stop() 只取消 speechSynthesis 就返回了，所以要单独暴露这个出口。
+ */
+export function stopSharedAudio(): void {
+  stopCurrentAudio()
+}
+
 /** 播放已备好的 wav：不再有任何 await，调用即出声。 */
 export function playPrepared(
   prepared: PreparedSpeech,
@@ -251,7 +275,12 @@ export function playPrepared(
   stopCurrentAudio()
   const url = URL.createObjectURL(prepared.blob)
   const audio = new Audio(url)
-  audio.playbackRate = rate
+  // 倍速要在「加载后 / seek 后」重新落一次：部分 WebView 在非 1.0 倍速下
+  // 设置 currentTime 会把 playbackRate 重置回 1，导致后续进度与会话状态错乱。
+  const applyRate = () => {
+    try { audio.playbackRate = rate } catch { /* noop */ }
+  }
+  applyRate()
   audioSharedHtml = audio
 
   let ended = false
@@ -271,13 +300,26 @@ export function playPrepared(
     if (webAudioTried) return
     webAudioTried = true
     clearProgressTick()
-    playViaWebAudio(prepared.blob, rate, reqIdShared, onEnded, emitSpeaking, url)
+    playViaWebAudio(prepared.blob, rate, reqIdShared, onEnded, emitSpeaking, url, onProgress)
   }
   audio.onerror = () => tryWebAudio()
 
   if (startAt > 0) {
+    const target = Math.min(startAt, prepared.duration || startAt)
+    let seekRetried = false
     audio.addEventListener('loadedmetadata', () => {
-      try { audio.currentTime = Math.min(startAt, prepared.duration || startAt) } catch { /* noop */ }
+      applyRate()
+      try { audio.currentTime = target } catch { /* noop */ }
+    }, { once: true })
+    // seek 完成后确认倍速仍生效、播放没被打断；若 seek 丢失则补一次
+    audio.addEventListener('seeked', () => {
+      applyRate()
+      if (!seekRetried && Math.abs(audio.currentTime - target) > 0.3) {
+        seekRetried = true
+        try { audio.currentTime = target } catch { /* noop */ }
+      }
+      const p2 = audio.play()
+      if (p2 && typeof p2.catch === 'function') p2.catch(() => { /* 已由外层兜底 */ })
     }, { once: true })
   }
 

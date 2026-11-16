@@ -30,6 +30,17 @@ export interface GenerationProgress {
 const MAX_ATTEMPTS = 3
 const ALLOWED_CAP = 1200
 
+/**
+ * 等级窗口只作为「优先范围」：窗口内一个已掌握词都没有时退回全池。
+ * 否则用户明明标记了词、只是等级不在当前「我的等级」窗口，就会被误报
+ * 「还没有已掌握的单词」，看起来像词库没连通。
+ */
+function scopePool(rawPool: PoolWord[], allowedLevels?: Level[]): PoolWord[] {
+  if (!allowedLevels || allowedLevels.length === 0) return rawPool
+  const scoped = rawPool.filter((w) => !w.level || allowedLevels.includes(w.level))
+  return scoped.length > 0 ? scoped : rawPool
+}
+
 export function useAiLessons() {
   const [progress, setProgress] = useState<GenerationProgress>({
     status: 'idle',
@@ -52,14 +63,12 @@ export function useAiLessons() {
       mode: LearningMode,
       allowedLevels?: Level[],
       targetLevel?: Level | null,
+      currentLevel?: Level | null,
     ): GeneratedPlan => {
-      const rawPool = buildMasteredPool(masteredSet)
-      const pool = allowedLevels && allowedLevels.length > 0
-        ? rawPool.filter((w) => !w.level || allowedLevels.includes(w.level))
-        : rawPool
+      const pool = scopePool(buildMasteredPool(masteredSet), allowedLevels)
       const reviewRaw = getReviewWords()
 
-      const profile = buildLearnerProfile(pool, reviewRaw, targetLevel ?? null, loadStreak())
+      const profile = buildLearnerProfile(pool, reviewRaw, targetLevel ?? null, loadStreak(), currentLevel ?? null)
       return recommend(profile, mode)
     },
     [],
@@ -75,14 +84,18 @@ export function useAiLessons() {
       overrides?: { difficulty?: Difficulty },
       allowedLevels?: Level[],
       targetLevel?: Level | null,
+      currentLevel?: Level | null,
     ): Promise<Lesson> => {
       if (!isConfigReady(cfg)) throw new Error('请先在「设置」中配置大模型 API')
 
-      const rawPool = buildMasteredPool(masteredSet)
-      const pool: PoolWord[] = allowedLevels && allowedLevels.length > 0
-        ? rawPool.filter((w) => !w.level || allowedLevels.includes(w.level))
-        : rawPool
-      if (pool.length === 0) throw new Error('还没有已掌握的单词：先去词库标记掌握，再来生成')
+      const pool = scopePool(buildMasteredPool(masteredSet), allowedLevels)
+      if (pool.length === 0) {
+        throw new Error(
+          masteredSet.size === 0
+            ? '还没有已掌握的单词：先去词库标记掌握，再来生成'
+            : '已掌握标记没能匹配到词库词条：请到「词库」重新点一次「已掌握」圆圈',
+        )
+      }
 
       const reviewRaw = getReviewWords()
       const masteredKeys = new Set(pool.map((w) => w.key))
@@ -99,7 +112,7 @@ export function useAiLessons() {
         }))
 
       // 画像 → 推荐计划（词数由 planner 动态决定）→ 用户仅可覆盖难度
-      const profile = buildLearnerProfile(pool, reviewRaw, targetLevel ?? null, loadStreak())
+      const profile = buildLearnerProfile(pool, reviewRaw, targetLevel ?? null, loadStreak(), currentLevel ?? null)
       let plan = recommend(profile, mode)
       if (overrides?.difficulty !== undefined) plan = { ...plan, difficulty: overrides.difficulty }
 
@@ -137,15 +150,16 @@ export function useAiLessons() {
       })
 
       const allowed = pool.slice(0, ALLOWED_CAP).map((w) => w.word)
+      const masteredWords = pool.map((w) => w.word)
       const effectiveCondition: LessonCondition = { ...condition, difficulty: plan.difficulty }
-      void runGeneration(lesson.id, group, cfg, effectiveCondition, kind, allowed)
+      void runGeneration(lesson.id, group, cfg, effectiveCondition, kind, allowed, masteredWords)
 
       return lesson
     },
     [],
   )
   const resume = useCallback(
-    async (lessonId: string, cfg: LlmConfig) => {
+    async (lessonId: string, cfg: LlmConfig, masteredSet?: Set<string>) => {
       if (!isConfigReady(cfg)) throw new Error('请先配置大模型 API')
       const lesson = await getLessonFull(lessonId)
       if (!lesson) return
@@ -174,6 +188,10 @@ export function useAiLessons() {
         error: null,
       }))
       const allowed = words.map((w) => w.word)
+      // 有已掌握词集就按完整词池算「仅已掌握」覆盖率，否则退化为本篇重点词
+      const masteredWords = masteredSet
+        ? buildMasteredPool(masteredSet).map((w) => w.word)
+        : words.map((w) => w.word)
       void runGeneration(
         lesson.id,
         group,
@@ -185,6 +203,7 @@ export function useAiLessons() {
         },
         lesson.kind,
         allowed,
+        masteredWords,
       )
     },
     [],
@@ -203,9 +222,10 @@ export function useAiLessons() {
     condition: LessonCondition,
     kind: LessonKind,
     allowed: string[],
-  ): Promise<void> {
+    masteredWords: string[],
+    ): Promise<void> {
     try {
-      const { content, coverage } = await generateOne(group, cfg, condition, kind, allowed, () => cancelRef.current)
+      const { content, coverage } = await generateOne(group, cfg, condition, kind, allowed, masteredWords, () => cancelRef.current)
       const segments: LessonSegment[] = content.segments.map((seg, i) => ({
         position: i,
         speaker: seg.speaker,
@@ -252,13 +272,18 @@ function pickOneGroup(
     }
   }
 
-  // 2. 把 plan.categoryWeights 应用到候选 category
+  // 2. 把 plan.categoryWeights 应用到候选 category；
+  //    并排除上一篇用过的场景（候选只剩一个时不再排除），避免连续几篇都是同一题材
   const catArr = Array.from(categories)
+  const lastScene = readLastScene()
+  const withoutLast = lastScene && catArr.length > 1 ? catArr.filter((c) => c !== lastScene) : catArr
+  const candidates = withoutLast.length ? withoutLast : catArr
   const weights: Partial<Record<CategoryId, number>> = {}
-  for (const c of catArr) weights[c] = plan.categoryWeights[c] ?? 1
-  const cat = weightedPick(catArr, weights as any)
+  for (const c of candidates) weights[c] = plan.categoryWeights[c] ?? 1
+  const cat = weightedPick(candidates, weights as any)
+  writeLastScene(String(cat))
 
-  // 3. 从该 category 的词里挑 max 个
+  // 3. 从该 category 的词里挑 max 个（避开上一篇用过的场景，避免连续同题材）
   const bucket = pool.filter((w) => w.category === cat)
   const picked = bucket.sort(() => Math.random() - 0.5).slice(0, max)
 
@@ -289,6 +314,25 @@ function pickOneGroup(
   }
 }
 
+/** 上一篇 AI 课程用过的场景（跨重启保留，用于避免连续同题材）。 */
+const LAST_SCENE_KEY = 'lexicore-ai-last-scene'
+
+function readLastScene(): string | null {
+  try {
+    return localStorage.getItem(LAST_SCENE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeLastScene(scene: string): void {
+  try {
+    localStorage.setItem(LAST_SCENE_KEY, scene)
+  } catch {
+    /* 隐私模式忽略 */
+  }
+}
+
 function loadStreak(): number {
   try {
     // 兼容两种 key 格式：新的 lexicore-streak / 旧的 streak
@@ -299,11 +343,35 @@ function loadStreak(): number {
   }
 }
 
+/** auto 混搭：记住上一篇体裁，跨重启也生效（localStorage 里只存一个短字符串）。 */
+const LAST_KIND_KEY = 'lexicore-ai-last-kind'
+
+function readLastKind(): LessonKind | null {
+  try {
+    const v = localStorage.getItem(LAST_KIND_KEY)
+    return LESSON_FORMATS.some((f) => f.id === v) ? (v as LessonKind) : null
+  } catch {
+    return null
+  }
+}
+
+function writeLastKind(kind: LessonKind): void {
+  try {
+    localStorage.setItem(LAST_KIND_KEY, kind)
+  } catch {
+    /* 隐私模式忽略 */
+  }
+}
+
 function pickKind(format: LessonFormatChoice | undefined): LessonKind {
   if (format && format !== 'auto') return format
-  // auto → 六种体裁随机挑一个（单篇每次都不一样）
+  // auto → 混搭：随机挑一种，但避免和上一篇重复
+  const prev = readLastKind()
   const all: LessonKind[] = LESSON_FORMATS.map((f) => f.id)
-  return all[Math.floor(Math.random() * all.length)]
+  const candidates = prev && all.length > 1 ? all.filter((k) => k !== prev) : all
+  const picked = candidates[Math.floor(Math.random() * candidates.length)]
+  writeLastKind(picked)
+  return picked
 }
 
 // ========================= generateOne（3 轮重试 + 覆盖率/用词率校验） =========================
@@ -314,10 +382,11 @@ async function generateOne(
   condition: LessonCondition,
   kind: LessonKind,
   allowed: string[],
+  masteredWords: string[],
   shouldCancel: () => boolean,
 ): Promise<{
   content: LessonContent
-  coverage: { hit: number; total: number; missing: string[]; known: number; realWords: number }
+  coverage: { hit: number; total: number; missing: string[]; known: number; realWords: number; mastered: number }
 }> {
   let missing: string[] = []
   let banned: string[] = []
@@ -373,14 +442,18 @@ async function generateOne(
       if (shouldCancel()) throw new Error('canceled')
       if (e instanceof LlmError && (e.kind === 'auth' || e.kind === 'rate')) throw e
       // 保留「内容无法解析 / 内容为空」这类可操作提示，不要吞成笼统的「生成失败」。
-      if (e instanceof LlmError && (e.kind === 'json' || e.kind === 'empty') && attempt === MAX_ATTEMPTS - 1) {
-        throw e
-      }
+      // 其中「内容为空」在 chatJSON 内部已尝试过多种参数变体，外层重复重试只会拖慢并多花额度。
+      if (e instanceof LlmError && e.kind === 'empty') throw e
+      if (e instanceof LlmError && e.kind === 'json' && attempt === MAX_ATTEMPTS - 1) throw e
       await sleep(800 * (attempt + 1))
     }
   }
 
   if (!best) throw new Error('生成失败')
+  // 仅「已掌握词」覆盖率：用完整已掌握词池（不裁剪 prompt 上限）统计，
+  // 与 coverage_known（已掌握 + 本篇重点词）区分开。
+  const textAll = best.content.segments.map((s) => s.en).join('\n')
+  const masteredUsage = vocabUsage([], masteredWords, textAll)
   return {
     content: best.content,
     coverage: {
@@ -389,6 +462,7 @@ async function generateOne(
       missing: best.missing,
       known: best.usage.knownWords,
       realWords: best.usage.realWords,
+      mastered: masteredUsage.knownWords,
     },
   }
 }

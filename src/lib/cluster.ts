@@ -43,7 +43,7 @@ export const TOPICS: TopicMeta[] = [
   { id: 'travel', label: '旅行出行', categories: ['travel', 'space', 'nature'] },
   { id: 'tech', label: '科技', categories: ['science', 'media'] },
   { id: 'work', label: '职场', categories: ['work', 'society'] },
-  { id: 'story', label: '童话故事', categories: ['animals', 'toys', 'arts', 'emotions'] },
+  { id: 'story', label: '动物与童趣', categories: ['animals', 'toys', 'arts', 'emotions'] },
 ]
 
 export const TOPIC_LABEL: Record<TopicId, string> = Object.fromEntries(
@@ -67,6 +67,13 @@ export function categoryOfKey(key: string): CategoryId | null {
 /** 构建已掌握词池：CEFR 主库 ∩ 掌握集，+ 人教词表 ∩ 掌握集，按规范化键去重。 */
 export function buildMasteredPool(masteredSet: Set<string>): PoolWord[] {
   const out = new Map<string, PoolWord>()
+  // 掌握记录来自多个入口（词库圆圈 / 文章点词 / 导入进度），词形可能有大小写、
+  // 空格或标点差异。统一转成规范化键再匹配，避免「明明标记了却匹配不到词条」。
+  const masteredKeys = new Set<string>()
+  for (const raw of masteredSet) {
+    const key = wordKey(raw)
+    if (key) masteredKeys.add(key)
+  }
   const add = (
     word: string,
     ipa: string,
@@ -74,7 +81,7 @@ export function buildMasteredPool(masteredSet: Set<string>): PoolWord[] {
     category: CategoryId | undefined,
     level?: Level,
   ) => {
-    if (!masteredSet.has(word) || !meaning) return
+    if (!masteredKeys.has(wordKey(word)) || !meaning) return
     const key = wordKey(word)
     if (out.has(key)) return
     out.set(key, {

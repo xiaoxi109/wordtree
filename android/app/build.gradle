@@ -7,8 +7,8 @@ android {
         applicationId "com.lexicore.learner"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 9
-        versionName "0.6.0"
+        versionCode 112
+        versionName "0.15.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -24,7 +24,7 @@ android {
     }
     applicationVariants.all { variant ->
         variant.outputs.all {
-            def appName = "LexiCore-Learner"
+            def appName = "词树"
             def versionName = defaultConfig.versionName
             def buildType = variant.buildType.name
             outputFileName = "${appName}-v${versionName}-${buildType}.apk"

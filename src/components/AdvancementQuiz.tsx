@@ -89,7 +89,7 @@ export function AdvancementQuiz({ route, currentRung, masteredSet, onComplete, o
           </div>
           <div>
             <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
-              恭喜！你已掌握当前级全部 {check.stats.total} 词
+              你已达到当前级掌握要求（{check.stats.mastered} / {check.stats.required} 词）
             </p>
             <p className="mt-1 text-xs text-slate-400">
               抽检 {questions.length} 个当前级的词 · 通过率 {Math.round(ADVANCEMENT_CONFIG.QUIZ_PASS_RATE * 100)}% 可晋级
@@ -135,7 +135,8 @@ export function AdvancementQuiz({ route, currentRung, masteredSet, onComplete, o
         <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
           <p className="text-base font-bold text-slate-800 dark:text-slate-100">尚未达到闯关条件</p>
           <p className="max-w-xs text-xs leading-relaxed text-slate-400">
-            当前等级还需掌握更多单词，继续背词后再来挑战吧
+            已掌握 {check.stats.mastered} / {check.stats.required} 词（当前级词表 {check.stats.total} 词），
+            继续背词后再来挑战吧
           </p>
           <button onClick={onCancel} className="btn-soft mt-2 !px-8 !py-3">
             返回首页

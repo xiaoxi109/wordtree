@@ -31,7 +31,7 @@ export const MODE_LABEL: Record<LearningMode, { emoji: string; label: string; hi
   stretch: {
     emoji: '🚀',
     label: '拉伸',
-    hint: '想突破舒适区 · 引入下一级词，句式更有挑战',
+    hint: '想多读一点 · 篇幅更长、复习词更少，多覆盖熟练场景',
   },
 }
 
@@ -43,6 +43,8 @@ export interface LearnerProfile {
   levelDistribution: Record<string, number>
   averageLevel: Level | null
   targetLevel: Level | null
+  /** 设置里「我的等级」对应的 CEFR 等级（声明的当前水平，推荐的锚点） */
+  currentLevel: Level | null
   categoryDistribution: Record<string, number>
   weakCategories: CategoryId[]
   strongCategories: CategoryId[]
@@ -57,9 +59,9 @@ export interface GeneratedPlan {
   reason: string
 }
 
-type Difficulty = 'adaptive' | 'A1' | 'A2' | 'B1' | 'B2'
+type Difficulty = 'adaptive' | 'Pre-A1' | 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
 
-const LEVEL_ORDER: Level[] = ['Pre-A1', 'A1', 'A2', 'B1', 'B2']
+const LEVEL_ORDER: Level[] = ['Pre-A1', 'A1', 'A2', 'B1', 'B2', 'C1']
 const LEVEL_INDEX: Record<string, number> = Object.fromEntries(LEVEL_ORDER.map((l, i) => [l, i]))
 
 /** 构建学习者画像（所有规则的原始信号来源）。 */
@@ -68,6 +70,7 @@ export function buildLearnerProfile(
   reviewPool: ReviewWord[],
   targetLevel: Level | null,
   streakDays: number,
+  currentLevel: Level | null = null,
 ): LearnerProfile {
   const levelDist: Record<string, number> = {}
   const catDist: Record<string, number> = {}
@@ -119,6 +122,7 @@ export function buildLearnerProfile(
     levelDistribution: levelDist,
     averageLevel: avgLevel,
     targetLevel,
+    currentLevel,
     categoryDistribution: catDist,
     weakCategories: weakCats,
     strongCategories: strongCats,
@@ -140,42 +144,30 @@ function computeAverageLevel(dist: Record<string, number>): Level | null {
   return LEVEL_ORDER[Math.min(LEVEL_ORDER.length - 1, Math.max(0, avgIdx))]
 }
 
-/** 全场景推荐 + 模式覆盖 → 最终生成计划。 */
+/**
+ * 全场景推荐 + 模式覆盖 → 最终生成计划。
+ *
+ * 注意：句式难度与学习模式**无关**，只由「我的等级」决定（用户可在生成条件里自行覆盖）；
+ * 模式只影响词数、复习词占比与场景权重，避免切换模式时难度跟着跳。
+ */
 export function recommend(profile: LearnerProfile, mode: LearningMode): GeneratedPlan {
   const baseWords = baseWordsPerLesson(profile)
-  const baseDiff = baseDifficulty(profile)
+  const difficulty = baseDifficulty(profile)
   const baseRatio = baseReviewRatio(profile)
 
-  // 模式覆盖基础推荐值
+  // 模式覆盖：只覆盖词数与复习占比
   let words = baseWords
-  let difficulty = baseDiff
   let ratio = baseRatio
 
   if (mode === 'review') {
     words = Math.max(12, baseWords - 4)
-    // 巩固模式：取平均等级（不拉伸），但至少 A1
-    if (profile.averageLevel) {
-      difficulty = clampToDifficulty(profile.averageLevel)
-    } else {
-      difficulty = 'A1'
-    }
     ratio = Math.max(0.4, baseRatio) // 至少 40% 复习词
   } else if (mode === 'stretch') {
     words = Math.min(28, baseWords + 4)
-    // 拉伸模式：目标等级 或 平均等级 + 1
-    if (profile.targetLevel) {
-      difficulty = clampToDifficulty(profile.targetLevel)
-    } else if (profile.averageLevel) {
-      const idx = LEVEL_INDEX[profile.averageLevel] ?? 1
-      const next = LEVEL_ORDER[Math.min(LEVEL_ORDER.length - 1, idx + 1)]
-      difficulty = clampToDifficulty(next)
-    } else {
-      difficulty = 'A2'
-    }
-    ratio = 0.15
-  } else {
-    // daily：直接用基础推荐值，只微调一些边界
-    if (profile.reviewPressure === 'high') ratio = Math.max(0.3, baseRatio)
+    ratio = 0.15 // 少复习词，篇幅更长
+  } else if (profile.reviewPressure === 'high') {
+    // daily：错词多时略微提高复习占比
+    ratio = Math.max(0.3, baseRatio)
   }
 
   const categoryWeights = buildCategoryWeights(profile, mode)
@@ -204,15 +196,10 @@ function baseWordsPerLesson(p: LearnerProfile): number {
 }
 
 function baseDifficulty(p: LearnerProfile): Difficulty {
-  // 进阶拉伸逻辑：如果平均等级 B1 且目标 B2 → 推 B2
-  if (p.averageLevel && p.targetLevel) {
-    const avgIdx = LEVEL_INDEX[p.averageLevel] ?? 0
-    const targetIdx = LEVEL_INDEX[p.targetLevel] ?? avgIdx
-    if (targetIdx > avgIdx) return clampToDifficulty(p.targetLevel)
-  }
-  // 巩固期 → 自适应（让模型自己贴合）
+  // 日常模式贴合「我的等级」（设置里声明的当前水平），不自动上探到目标级；
+  // 想要更有挑战请用「拉伸」模式（会瞄准下一级）。
   if (p.reviewPressure === 'high') return 'adaptive'
-  return clampToDifficulty(p.averageLevel ?? 'A1')
+  return clampToDifficulty(p.currentLevel ?? p.averageLevel ?? 'A1')
 }
 
 function baseReviewRatio(p: LearnerProfile): number {
@@ -274,8 +261,8 @@ function clampRatio(r: number): number {
 }
 
 function clampToDifficulty(level: Level): Difficulty {
-  // Pre-A1 对应 A1 难度（Level 表最底层的 Pre-A1 映射到 A1 prompt hint 就够用了）
-  if (level === 'Pre-A1') return 'A1'
+  // Pre-A1 是独立难度档：极短句 + 最基础词汇，与设置里的「我的等级」一一对应
+  if (level === 'Pre-A1') return 'Pre-A1'
   return level
 }
 

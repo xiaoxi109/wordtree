@@ -6,6 +6,7 @@ import {
   normalizeKind,
   parseLessonContent,
   segmentNodes,
+  stripMarkup,
   stripWTags,
   textTokens,
 } from './parse'
@@ -94,6 +95,27 @@ describe('<w> 标签解析', () => {
     expect(hasWTags('He <w>ordered</w> a salad.')).toBe(true)
     expect(hasWTags('He ordered a salad.')).toBe(false)
     expect(stripWTags('He <w>ordered</w> a salad.')).toBe('He ordered a salad.')
+  })
+
+  it('stripMarkup 清掉译文里的中文尖括号标记但保留文字', () => {
+    expect(stripMarkup('我有一个<哥哥>和一个<妹妹>。')).toBe('我有一个哥哥和一个妹妹。')
+    expect(stripMarkup('我的<w>哥哥</w>很大。')).toBe('我的哥哥很大。')
+    expect(stripMarkup('我有一个<<哥哥>>。')).toBe('我有一个哥哥。')
+    expect(stripMarkup('普通译文，没有标记。')).toBe('普通译文，没有标记。')
+  })
+
+  it('parseLessonContent 入库时清洗译文/标题/角色名，保留英文正文的 <w> 标签', () => {
+    const content = parseLessonContent({
+      title: '<家人>',
+      type: 'story',
+      segments: [
+        { speaker: '<我>', en: 'I have a <w>brother</w>.', zh: '我有一个<哥哥>。' },
+      ],
+    })
+    expect(content.title).toBe('家人')
+    expect(content.segments[0].speaker).toBe('我')
+    expect(content.segments[0].zh).toBe('我有一个哥哥。')
+    expect(content.segments[0].en).toBe('I have a <w>brother</w>.')
   })
 
   it('有标签时按标签切分，标签内词形归一为词键', () => {

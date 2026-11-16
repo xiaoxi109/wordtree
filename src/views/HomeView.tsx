@@ -1,9 +1,9 @@
 import { useMemo } from 'react'
-import { ALL_WORDS, LEVELS, TOTAL } from '../data'
+import { CORE_WORDS, LEVELS, TOTAL } from '../data'
 import type { Level } from '../data'
 import { GRADE_RUNGS, LEVEL_RUNGS, type Route, type GradeRung, type LevelRung } from '../data/levels'
 import { LEVEL_STYLE, ProgressSummary } from '../components/word'
-import { ChevronRightIcon, SearchIcon } from '../components/icons'
+import { ChevronRightIcon } from '../components/icons'
 
 const TODAY = new Intl.DateTimeFormat('zh-CN', {
   month: 'long',
@@ -22,7 +22,6 @@ const TODAY = new Intl.DateTimeFormat('zh-CN', {
 export default function HomeView({
   masteredSet,
   onOpenLevel,
-  onOpenSearch,
   route = 'level',
   currentRung,
   activeLevels,
@@ -31,7 +30,6 @@ export default function HomeView({
 }: {
   masteredSet: Set<string>
   onOpenLevel: (level: Level) => void
-  onOpenSearch: () => void
   /** 当前学习路线 */
   route?: Route
   /** 当前等级（用于头部显示和进度计算） */
@@ -43,9 +41,9 @@ export default function HomeView({
   /** 点击开启闯关 */
   onStartQuiz?: () => void
 }) {
-  // 全部词库进度（始终显示，让用户了解全貌）
+  // 课程词表进度（词典扩展词不计入学习进度）
   const masteredCount = useMemo(
-    () => ALL_WORDS.filter((w) => masteredSet.has(w.word)).length,
+    () => CORE_WORDS.filter((w) => masteredSet.has(w.word)).length,
     [masteredSet],
   )
   const overallPct = TOTAL ? Math.round((masteredCount / TOTAL) * 100) : 0
@@ -53,7 +51,7 @@ export default function HomeView({
   // 激活窗口范围内的进度（软默认筛选）
   const windowStats = useMemo(() => {
     if (!activeLevels || activeLevels.length === 0) return null
-    const scope = ALL_WORDS.filter((w) => activeLevels.includes(w.level))
+    const scope = CORE_WORDS.filter((w) => activeLevels.includes(w.level))
     const done = scope.filter((w) => masteredSet.has(w.word)).length
     return { total: scope.length, done, pct: scope.length ? Math.round((done / scope.length) * 100) : 0 }
   }, [activeLevels, masteredSet])
@@ -71,7 +69,7 @@ export default function HomeView({
   const levels = useMemo(
     () =>
       LEVELS.map((l) => {
-        const words = ALL_WORDS.filter((w) => w.level === l.id)
+        const words = CORE_WORDS.filter((w) => w.level === l.id)
         const done = words.filter((w) => masteredSet.has(w.word)).length
         return {
           ...l,
@@ -140,16 +138,6 @@ export default function HomeView({
       <div className="mb-4">
         <ProgressSummary done={masteredCount} total={TOTAL} pct={overallPct} />
       </div>
-
-      <button
-        onClick={onOpenSearch}
-        className="surface mb-4 flex w-full items-center gap-3 px-3 py-2.5 text-left transition active:scale-[0.995]"
-        aria-label="搜索全部单词"
-      >
-        <SearchIcon width={16} height={16} className="shrink-0 text-slate-400" />
-        <span className="min-w-0 flex-1 text-[12px] text-slate-400">搜索全部单词 / 释义 / 音标</span>
-        <ChevronRightIcon width={14} height={14} className="shrink-0 text-slate-300" />
-      </button>
 
       <div className="mb-1.5 flex items-center justify-between gap-3">
         <p className="eyebrow">按西式等级</p>

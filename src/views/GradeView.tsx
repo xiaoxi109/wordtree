@@ -21,7 +21,6 @@ export default function GradeView({
   onToggleMastered: (w: Word) => void
 }) {
   const [catFilter, setCatFilter] = useState<CategoryId | 'all'>('all')
-  const [commonOnly, setCommonOnly] = useState(false)
   const [showUnmastered, setShowUnmastered] = useState(true)
   const [showMastered, setShowMastered] = useState(false)
   const [search, setSearch] = useState('')
@@ -37,17 +36,23 @@ export default function GradeView({
     const q = search.trim().toLowerCase()
     return scope.filter((w) => {
       if (catFilter !== 'all' && (w.category ?? 'thinking') !== catFilter) return false
-      if (commonOnly && !w.common) return false
       if (!showUnmastered && !showMastered) return false
       if (!showUnmastered && showMastered && !masteredSet.has(w.word)) return false
       if (showUnmastered && !showMastered && masteredSet.has(w.word)) return false
       if (!q) return true
       return w.word.toLowerCase().includes(q) || w.meaning.includes(q) || w.ipa.toLowerCase().includes(q)
     })
-  }, [scope, catFilter, commonOnly, showUnmastered, showMastered, masteredSet, search])
+  }, [scope, catFilter, showUnmastered, showMastered, masteredSet, search])
 
   const filtered = useMemo(() => base.filter((w) => matchesPos(w, posFilter)), [base, posFilter])
   const posCounts = useMemo(() => countPos(base), [base])
+
+  // 筛选条件签名（不含掌握状态）：只有筛选变化才重置列表的渐进加载批次
+  const resetKey = [
+    catFilter, showUnmastered, showMastered,
+    search.trim().toLowerCase(),
+    Array.from(posFilter).sort().join(','),
+  ].join('|')
   const done = scope.filter((w) => masteredSet.has(w.word)).length
   const pct = scope.length ? Math.round((done / scope.length) * 100) : 0
 
@@ -76,8 +81,6 @@ export default function GradeView({
         hideLevel
         catFilter={catFilter}
         setCatFilter={setCatFilter}
-        commonOnly={commonOnly}
-        setCommonOnly={setCommonOnly}
         search={search}
         setSearch={setSearch}
         showMasterChips
@@ -92,11 +95,12 @@ export default function GradeView({
         posCounts={posCounts}
       />
 
-      {/* FilterBar 是 fixed(~72px)，需额外让开，否则首批词卡被压住 */}
-      <div className="pt-[76px]">
+      {/* FilterBar 是 fixed（搜索行 + 掌握/显示语言常驻行，约 100px），需额外让开 */}
+      <div className="pt-[116px]">
         <WordGrid
           words={filtered}
           masteredSet={masteredSet}
+          resetKey={resetKey}
           mode={displayMode}
           onOpen={onOpen}
           onToggleMastered={onToggleMastered}

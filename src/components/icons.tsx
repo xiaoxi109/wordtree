@@ -37,6 +37,13 @@ export const TargetIcon = (p: P) => (
   </svg>
 )
 
+/** 星级：filled 时填充当前色（闯关通关用）。 */
+export const StarIcon = ({ filled, ...p }: P & { filled?: boolean }) => (
+  <svg {...base({ fill: filled ? 'currentColor' : 'none', ...p })}>
+    <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+  </svg>
+)
+
 export const HeadphonesIcon = (p: P) => (
   <svg {...base(p)}>
     <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
@@ -273,5 +280,26 @@ export const EditIcon = (p: P) => (
 export const BoltIcon = (p: P) => (
   <svg {...base(p)}>
     <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+  </svg>
+)
+
+export const WavesIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M3 12h2M7 8v8M11 5v14M15 8v8M19 10v4M21 12h1" />
+  </svg>
+)
+
+export const GridIcon = (p: P) => (
+  <svg {...base(p)}>
+    <rect x="3" y="3" width="7" height="7" rx="1.5" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" />
+    <rect x="3" y="14" width="7" height="7" rx="1.5" />
+    <rect x="14" y="14" width="7" height="7" rx="1.5" />
+  </svg>
+)
+
+export const PuzzleIcon = (p: P) => (
+  <svg {...base(p)}>
+    <path d="M9 4a2 2 0 1 1 4 0v1h3a1 1 0 0 1 1 1v3h1a2 2 0 1 1 0 4h-1v3a1 1 0 0 1-1 1h-3v-1a2 2 0 1 0-4 0v1H6a1 1 0 0 1-1-1v-3H4a2 2 0 1 1 0-4h1V6a1 1 0 0 1 1-1h3z" />
   </svg>
 )

@@ -4,6 +4,48 @@
 
 :root {
   color-scheme: light dark;
+  /* 浅色：温暖纸感中性色，数值保持原设计，浅色外观零变化 */
+  --tone-white: 255 255 255;
+  --tone-50: 247 244 236;
+  --tone-100: 240 235 224;
+  --tone-200: 229 220 203;
+  --tone-300: 211 198 176;
+  --tone-400: 169 155 133;
+  --tone-500: 130 116 95;
+  --tone-600: 98 87 71;
+  --tone-700: 69 61 50;
+  --tone-800: 43 39 33;
+  --tone-900: 25 23 19;
+  --tone-950: 15 14 11;
+  --page-bg: #f6f3ea;
+  /* 播放器进度条 */
+  --seek-fill: #2f7d66;
+  --seek-track: rgb(25 23 19 / 0.12);
+  --seek-thumb-ring: #fbf8f2;
+}
+
+/*
+ * 深色配色：冷调墨绿灰，按明度分层（数字小＝亮文字，数字大＝暗表面）。
+ * 白色改为柔和冷白：全站 dark:bg-white/10 之类叠加层不再刺眼，也不发灰脏。
+ */
+.dark {
+  color-scheme: dark;
+  --tone-white: 226 236 228;
+  --tone-50: 242 247 243;
+  --tone-100: 228 237 231;
+  --tone-200: 200 214 205;
+  --tone-300: 170 188 177;
+  --tone-400: 140 159 147;
+  --tone-500: 110 130 118;
+  --tone-600: 78 97 86;
+  --tone-700: 55 71 62;
+  --tone-800: 38 51 44;
+  --tone-900: 27 37 31;
+  --tone-950: 18 26 21;
+  --page-bg: #121a15;
+  --seek-fill: #4d9980;
+  --seek-track: rgb(226 236 228 / 0.18);
+  --seek-thumb-ring: #1b241e;
 }
 
 html,
@@ -20,7 +62,7 @@ html {
 body {
   margin: 0;
   overflow: hidden;
-  background-color: #f6f3ea;
+  background-color: var(--page-bg);
   background-image:
     radial-gradient(900px 480px at 4% -14%, rgba(217, 242, 124, 0.16), transparent 60%),
     radial-gradient(1000px 560px at 100% -6%, rgba(35, 101, 83, 0.07), transparent 58%);
@@ -31,15 +73,18 @@ body {
 }
 
 .dark body {
-  background-color: #0e100c;
   background-image:
-    radial-gradient(900px 500px at 8% -14%, rgba(217, 242, 124, 0.05), transparent 62%),
-    radial-gradient(1000px 560px at 100% -4%, rgba(47, 125, 102, 0.16), transparent 58%);
+    radial-gradient(900px 500px at 8% -14%, rgba(217, 242, 124, 0.06), transparent 62%),
+    radial-gradient(1000px 560px at 100% -4%, rgba(78, 153, 128, 0.14), transparent 58%);
 }
 
 ::selection {
   background: rgba(217, 242, 124, 0.6);
   color: #191713;
+}
+.dark ::selection {
+  background: rgba(78, 153, 128, 0.45);
+  color: #f0f5f1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -63,8 +108,9 @@ body {
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-[18px] bg-brand-600 px-5 py-3.5 text-sm font-semibold text-white shadow-float transition duration-200 hover:bg-brand-700 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50;
   }
+  /* 主操作按钮统一用品牌绿，两种主题一致，去掉深色下的纯白反色块 */
   .btn-ink {
-    @apply inline-flex items-center justify-center gap-2 rounded-[18px] bg-slate-900 px-5 py-3.5 text-sm font-semibold text-white shadow-float transition duration-200 hover:bg-slate-800 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100;
+    @apply inline-flex items-center justify-center gap-2 rounded-[18px] bg-brand-600 px-5 py-3.5 text-sm font-semibold text-white shadow-float transition duration-200 hover:bg-brand-700 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50;
   }
   .btn-soft {
     @apply inline-flex items-center justify-center gap-2 rounded-[18px] border border-slate-200/70 bg-white/70 px-4 py-3 text-sm font-semibold text-slate-700 transition duration-200 hover:bg-white active:scale-[0.985] disabled:pointer-events-none disabled:opacity-45 dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-200 dark:hover:bg-slate-800;
@@ -77,9 +123,26 @@ body {
     @apply inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-slate-200/60 bg-white/60 text-slate-600 transition duration-200 hover:bg-white hover:text-slate-900 active:scale-95 dark:border-slate-700/55 dark:bg-slate-800/50 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white;
   }
 
+  /*
+   * 正文单词 token：按下态给即时反馈，悬停底色只在「真正能悬停」的设备上出现。
+   * 触屏 / Android WebView 的 :hover 是粘性的——点过的词会一直留着底色，
+   * 叠在「当前句」的绿色底上就像一块洗不掉的方块。用媒体查询隔离后即可避免。
+   */
+  .word-token {
+    -webkit-tap-highlight-color: transparent;
+  }
+  .word-token:active {
+    background-color: rgb(15 23 42 / 0.10);
+  }
+  .dark .word-token:active {
+    background-color: rgb(255 255 255 / 0.14);
+  }
+
   /* 标签 */
+  /* 全站选中态统一：浅色是品牌浅底＋品牌字，深色是柔和半透明品牌底＋亮字，
+     不再出现黑底或深色下的纯白反色块 */
   .chip-on {
-    @apply inline-flex shrink-0 items-center gap-1.5 rounded-full border border-transparent bg-slate-900 px-3.5 py-2 text-[13px] font-semibold text-white shadow-sm transition duration-200 active:scale-95 dark:bg-white dark:text-slate-900;
+    @apply inline-flex shrink-0 items-center gap-1.5 rounded-full border border-brand-400/70 bg-brand-50 px-3.5 py-2 text-[13px] font-semibold text-brand-700 shadow-sm transition duration-200 active:scale-95 dark:border-brand-400/45 dark:bg-brand-400/20 dark:text-brand-100;
   }
   .chip-off {
     @apply inline-flex shrink-0 items-center gap-1.5 rounded-full border border-slate-200/70 bg-white/60 px-3.5 py-2 text-[13px] font-semibold text-slate-600 transition duration-200 hover:border-slate-300 hover:bg-white hover:text-slate-900 active:scale-95 dark:border-slate-700/55 dark:bg-slate-800/45 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100;
@@ -98,6 +161,96 @@ body {
   /* 极细分割线 */
   .hairline {
     @apply border-slate-200/60 dark:border-slate-700/50;
+  }
+
+  /*
+   * 播放器进度条：原生 range，细轨道 + 圆形滑块。
+   * 用 CSS 变量按百分比画已播放部分，避免额外的 DOM 层与 width transition 造成的顿挫。
+   * touch-action: none 是关键：否则安卓把手势当成页面滚动，拖动会「一段一段」。
+   */
+  .player-seek {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    width: 100%;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    cursor: pointer;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .player-seek:focus {
+    outline: none;
+  }
+
+  .player-seek::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: linear-gradient(
+      to right,
+      var(--seek-fill) 0%,
+      var(--seek-fill) var(--seek-pct, 0%),
+      var(--seek-track) var(--seek-pct, 0%),
+      var(--seek-track) 100%
+    );
+  }
+
+  .player-seek::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: 2px solid var(--seek-thumb-ring);
+    border-radius: 50%;
+    background: var(--seek-fill);
+    box-shadow: 0 1px 4px rgb(16 48 42 / 0.28);
+    transition: transform 0.15s ease;
+  }
+
+  .player-seek:active::-webkit-slider-thumb {
+    transform: scale(1.25);
+  }
+
+  .player-seek::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--seek-track);
+  }
+
+  .player-seek::-moz-range-progress {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--seek-fill);
+  }
+
+  .player-seek::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--seek-thumb-ring);
+    border-radius: 50%;
+    background: var(--seek-fill);
+    box-shadow: 0 1px 4px rgb(16 48 42 / 0.28);
+  }
+
+  .player-seek:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 4px rgb(47 125 102 / 0.25);
+  }
+}
+
+/*
+ * 单词悬停底色：只有同时具备「可悬停 + 精确指针」的设备才生效（桌面鼠标）。
+ * 触屏与 WebView 走 .word-token:active 的按下反馈，避免 :hover 残留。
+ */
+@media (hover: hover) and (pointer: fine) {
+  .word-token:hover {
+    background-color: rgb(15 23 42 / 0.06);
+  }
+  .dark .word-token:hover {
+    background-color: rgb(255 255 255 / 0.10);
   }
 }
 
@@ -164,6 +317,16 @@ body {
 .stagger > *:nth-child(6) { animation-delay: 0.22s; }
 .stagger > *:nth-child(7) { animation-delay: 0.26s; }
 .stagger > *:nth-child(8) { animation-delay: 0.3s; }
+
+/* AI 生成中：不确定进度的流动条。LLM 耗时不可预估，不用假的百分比 */
+@keyframes progress-sweep {
+  from { transform: translateX(-110%); }
+  to   { transform: translateX(330%); }
+}
+.progress-indeterminate {
+  width: 34%;
+  animation: progress-sweep 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
 
 /* 自定义滚动条：更细、更柔和 */
 ::-webkit-scrollbar {

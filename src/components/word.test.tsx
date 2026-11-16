@@ -59,26 +59,31 @@ function findButton(text: string): HTMLButtonElement {
   return btn as HTMLButtonElement
 }
 
-describe('词卡详情「标记为已掌握」', () => {
-  it('未掌握时点击：切换状态并关闭弹层', () => {
+describe('词卡详情「已掌握 / 未掌握」二态切换', () => {
+  it('未掌握时显示「加入已掌握」，点击后切换状态并关闭弹层', () => {
     let toggled = 0
     let closed = 0
     mount(false, () => toggled++, () => closed++)
 
-    flushSync(() => findButton('标记为已掌握').click())
+    flushSync(() => findButton('加入已掌握').click())
 
     expect(toggled).toBe(1)
     expect(closed).toBe(1)
   })
 
-  it('已掌握时点击取消：同样切换状态并关闭弹层', () => {
+  it('已掌握时显示「取消已掌握」，点击后切换状态并关闭弹层', () => {
     let toggled = 0
     let closed = 0
     mount(true, () => toggled++, () => closed++)
 
-    flushSync(() => findButton('点击取消').click())
+    flushSync(() => findButton('取消已掌握').click())
 
     expect(toggled).toBe(1)
     expect(closed).toBe(1)
+  })
+
+  it('不再提供「加入未掌握」第三态入口', () => {
+    mount(false, () => {}, () => {})
+    expect(document.body.textContent).not.toContain('加入未掌握')
   })
 })

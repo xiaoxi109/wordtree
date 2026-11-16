@@ -1,4 +1,4 @@
-export type Level = 'Pre-A1' | 'A1' | 'A2' | 'B1' | 'B2'
+export type Level = 'Pre-A1' | 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
 
 /** 中式阶梯 rung 顺序（由低到高）—— 从 levels.ts 重导出，保持 Word.grade 类型稳定 */
 export type GradeRung =
@@ -68,8 +68,15 @@ export interface Word {
   category?: CategoryId
   /** High-frequency / everyday word — shown as 常用. */
   common?: boolean
-  /** COCA 扩展包标记。扩展包当前未并入词库（见 index.ts Step 1），字段保留供日后接入。 */
+  /** 历史字段：旧 COCA 扩展包标记。扩展包已移除，补充词层改由 ECDICT 生成。 */
   extended?: boolean
+  /**
+   * 词层：
+   *   core  = 课程词表（教材 / 牛津 / 考纲词），参与学习队列、进度、晋级
+   *   extra = 词典扩展词（按词频补充），只用于查词与 AI 生成，不参与晋级统计
+   * 缺省视为 core。
+   */
+  tier?: 'core' | 'extra'
   /** Marked true for words that exist in the 人教版 (PEP) grade list but are NOT
    *  in the main word library — their 音标/释义 come from PEP data (no examples / category). */
   pepOnly?: boolean

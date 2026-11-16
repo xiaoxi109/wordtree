@@ -4,6 +4,7 @@ import type { CategoryId, Level, Word } from '../data'
 import { GRADE_RUNGS } from '../data/levels'
 import { GRADE_STYLE, GRADES } from '../data/grades'
 import { useSpeech } from '../hooks/useSpeech'
+import { useLexiconVersion } from '../hooks/useLexicon'
 import { wordKey } from '../lib/cluster'
 import { lookupWord } from '../lib/dict'
 import { textTokens } from '../lib/parse'
@@ -21,6 +22,7 @@ export const LEVEL_STYLE: Record<Level, { badge: string; dot: string }> = {
   A2: { badge: 'bg-violet-100/80 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300', dot: 'bg-violet-500' },
   B1: { badge: 'bg-amber-100/80 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300', dot: 'bg-amber-500' },
   B2: { badge: 'bg-rose-100/80 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300', dot: 'bg-rose-500' },
+  C1: { badge: 'bg-indigo-100/80 text-indigo-800 dark:bg-indigo-500/15 dark:text-indigo-300', dot: 'bg-indigo-500' },
 }
 
 // 年级徽标：人教词表显示「小学 / 初一 / 初二 …」而非 CEFR 等级。
@@ -257,12 +259,13 @@ export function WordDetailBody({
 }) {
   const pos = posShort(word)
 
-  /** 词键 → Word 的快速索引：例句点词时查词用 */
+  /** 词键 → Word 的快速索引：例句点词时查词用（扩展词加载后随版本重建） */
+  const lexV = useLexiconVersion()
   const wordMap = useMemo(() => {
     const m = new Map<string, Word>()
     for (const w of ALL_WORDS) m.set(wordKey(w.word), w)
     return m
-  }, [])
+  }, [lexV])
 
   /** 从例句里的原文 token 找到对应的完整 Word（处理屈折变体） */
   const resolveWord = useMemo(() => {
@@ -291,11 +294,11 @@ export function WordDetailBody({
                 if (hit) onOpenWord(hit)
               }}
               className={`rounded px-0.5 transition ${
-                onOpenWord
+                onOpenWord && resolveWord(n.text)
                   ? 'hover:bg-brand-100 hover:text-brand-700 active:bg-brand-500/25 dark:hover:bg-brand-500/20 dark:hover:text-brand-300'
                   : ''
-              } ${resolveWord(n.text) ? 'text-brand-700 underline decoration-dotted underline-offset-2 dark:text-brand-300' : ''}`}
-              title={resolveWord(n.text) ? '点击查词' : undefined}
+              }`}
+              title={onOpenWord && resolveWord(n.text) ? '点击查词' : undefined}
             >
               {n.text}
             </button>
@@ -315,7 +318,6 @@ export function WordDetailBody({
           <h2 className="mt-1.5 break-words font-display text-[34px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
             {word.word}
           </h2>
-          <p className="mt-2 text-[13px] text-slate-400">{word.ipa}</p>
         </div>
         <SpeakerBtn
           text={word.word}
@@ -325,24 +327,30 @@ export function WordDetailBody({
         />
       </div>
 
-      <div className="mt-4 flex flex-wrap items-center gap-1.5">
-        {word.grade ? <GradeBadge grade={word.grade} /> : <LevelBadge level={word.level} />}
-        {pos && (
-          <span className="rounded-full border border-slate-200/60 bg-white/70 px-2 py-0.5 text-[11px] font-bold text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-300">
-            {pos}
+      {/* 音标与徽章同一行：徽章紧跟音标右侧，放不下时横向轻扫，不再独占一行把释义往下挤 */}
+      <div className="mt-3 flex items-center gap-2">
+        <span className="shrink-0 text-[13px] text-slate-400">{word.ipa}</span>
+        <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+          <span className="shrink-0">
+            {word.grade ? <GradeBadge grade={word.grade} /> : <LevelBadge level={word.level} />}
           </span>
-        )}
-        {word.common && (
-          <span className="rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
-            常用词
-          </span>
-        )}
-        {mastered && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-brand-200/70 bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 dark:border-brand-500/25 dark:bg-brand-500/10 dark:text-brand-300">
-            <CheckIcon width={11} height={11} />
-            已掌握
-          </span>
-        )}
+          {pos && (
+            <span className="shrink-0 whitespace-nowrap rounded-full border border-slate-200/60 bg-white/70 px-2 py-0.5 text-[11px] font-bold text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-300">
+              {pos}
+            </span>
+          )}
+          {word.common && (
+            <span className="shrink-0 whitespace-nowrap rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
+              常用词
+            </span>
+          )}
+          {mastered && (
+            <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-brand-200/70 bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 dark:border-brand-500/25 dark:bg-brand-500/10 dark:text-brand-300">
+              <CheckIcon width={11} height={11} />
+              已掌握
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="surface-inset mt-4 p-4">
@@ -396,39 +404,41 @@ export function WordModal({
   /** 例句中点词打开新的 WordModal；不传则禁用点词交互 */
   onOpenWord?: (w: Word) => void
 }) {
+  // 正文里已有大号词形，头部不再重复标题：有上一词时左侧放返回按钮，否则留白
   return (
     <Sheet
       open
       onClose={onClose}
       title=""
+      headerLeading={
+        onPop && (
+          <button
+            onClick={onPop}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1.5 text-[12px] font-semibold text-brand-700 transition hover:bg-brand-100 active:scale-[0.97] dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/15"
+          >
+            <ChevronRightIcon width={14} height={14} className="rotate-180" />
+            返回上一词
+          </button>
+        )
+      }
       footer={
         <button
           onClick={() => {
-            // 标记/取消掌握是一次完成态操作，完成后直接关闭详情弹层回到词表。
+            // 系统只有「已掌握 / 未掌握」两态：一次点击即切换并关闭详情。
             onToggleMastered()
             onClose()
           }}
-          className={`flex w-full items-center justify-center gap-2 rounded-[18px] py-3.5 text-sm font-semibold transition active:scale-[0.985] ${
+          className={`flex w-full items-center justify-center gap-1.5 rounded-[18px] py-3.5 text-[13px] font-semibold transition active:scale-[0.985] ${
             mastered
-              ? 'bg-brand-600 text-white shadow-float hover:bg-brand-700'
-              : 'bg-slate-900 text-white shadow-float hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100'
+              ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/10 dark:text-slate-200 dark:hover:bg-white/15'
+              : 'bg-brand-600 text-white shadow-float hover:bg-brand-700'
           }`}
         >
-          <CheckIcon width={18} height={18} />
-          {mastered ? '已掌握 · 点击取消' : '标记为已掌握'}
+          {mastered ? <XIcon width={16} height={16} /> : <CheckIcon width={16} height={16} />}
+          {mastered ? '取消已掌握' : '加入已掌握'}
         </button>
       }
     >
-      {/* 卡片栈返回按钮：当是从另一个词的例句点进来时显示 */}
-      {onPop && (
-        <button
-          onClick={onPop}
-          className="mb-3 inline-flex items-center gap-1.5 rounded-full bg-brand-50 px-3 py-1 text-[12px] font-semibold text-brand-700 transition hover:bg-brand-100 active:scale-[0.97] dark:bg-brand-500/10 dark:text-brand-300 dark:hover:bg-brand-500/15"
-        >
-          <ChevronRightIcon width={14} height={14} className="rotate-180" />
-          返回上一个词
-        </button>
-      )}
       <WordDetailBody word={word} mastered={mastered} onOpenWord={onOpenWord} />
     </Sheet>
   )
@@ -452,7 +462,7 @@ export function FilterChip({ active, onClick, children }: { active: boolean; onC
       aria-pressed={active}
       className={`shrink-0 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-[12px] font-semibold transition active:scale-[0.98] ${
         active
-          ? 'border-slate-900 bg-slate-900 text-white shadow-sm dark:border-white dark:bg-white dark:text-slate-900'
+          ? 'border-brand-400 bg-brand-50 text-brand-700 dark:border-brand-500/50 dark:bg-brand-500/15 dark:text-brand-200'
           : 'border-slate-200/70 bg-white/70 text-slate-600 hover:border-slate-300 hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-300 dark:hover:bg-slate-800'
       }`}
     >
@@ -490,7 +500,7 @@ function PosFilterRow({
           <FilterChip key={p.id} active={active} onClick={() => toggle(p.id)}>
             {posLabel(p.id)}
             {counts && (
-              <span className={`ml-1 text-[11px] ${active ? 'text-white/60 dark:text-slate-500' : 'text-slate-400'}`}>{n}</span>
+              <span className={`ml-1 text-[11px] ${active ? 'text-brand-600 dark:text-brand-200/70' : 'text-slate-400'}`}>{n}</span>
             )}
           </FilterChip>
         )
@@ -517,8 +527,6 @@ export function FilterBar({
   setGradeFilter,
   catFilter,
   setCatFilter,
-  commonOnly,
-  setCommonOnly,
   search,
   setSearch,
   showMasterChips = false,
@@ -541,8 +549,6 @@ export function FilterBar({
   setGradeFilter?: (v: string | 'all') => void
   catFilter: CategoryId | 'all'
   setCatFilter: (v: CategoryId | 'all') => void
-  commonOnly: boolean
-  setCommonOnly: (v: boolean) => void
   search: string
   setSearch: (v: string) => void
   showMasterChips?: boolean
@@ -567,7 +573,6 @@ export function FilterBar({
     setLevelFilter?.('all')
     setGradeFilter?.('all')
     setCatFilter('all')
-    setCommonOnly(false)
     setShowUnmastered?.(true)
     setShowMastered?.(false)
     setPosFilter?.(new Set())
@@ -576,7 +581,7 @@ export function FilterBar({
 
   return (
     <div
-      className="fixed inset-x-0 z-20 border-b border-slate-900/[0.06] bg-[#f6f3ea]/90 backdrop-blur-xl dark:border-white/10 dark:bg-[#0e100c]/90"
+      className="fixed inset-x-0 z-20 border-b border-slate-900/[0.06] bg-[#f6f3ea]/90 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/90"
       style={{ top: 'calc(env(safe-area-inset-top) + 56px)' }}
     >
       <div className="mx-auto max-w-5xl px-4 py-2">
@@ -590,8 +595,8 @@ export function FilterBar({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="搜索单词 / 释义 / 音标"
-              aria-label="搜索单词"
+              placeholder="输入单词，查释义"
+              aria-label="输入单词，查释义"
               className="field h-11 pl-11 pr-10 !py-0 text-[16px] sm:text-[13px]"
             />
             {search && (
@@ -612,31 +617,43 @@ export function FilterBar({
             <span className="hidden sm:inline">筛选</span>
           </button>
         </div>
+
+        {/* 高频操作外置：掌握状态与卡片显示语言不进筛选弹层，一眼就能切换 */}
+        {(showMasterChips || (displayMode && setDisplayMode)) && (
+          <div className="no-scrollbar mt-2 flex items-center gap-1.5 overflow-x-auto">
+            {showMasterChips && (
+              <>
+                <FilterChip active={!!showUnmastered} onClick={() => setShowUnmastered?.(!(showUnmastered ?? false))}>
+                  未掌握
+                </FilterChip>
+                <FilterChip active={!!showMastered} onClick={() => setShowMastered?.(!(showMastered ?? false))}>
+                  已掌握
+                </FilterChip>
+              </>
+            )}
+            {displayMode && setDisplayMode && (
+              <DisplayModeToggle className="ml-auto" value={displayMode} onChange={setDisplayMode} />
+            )}
+          </div>
+        )}
       </div>
 
+      {/* 筛选弹层：与全局模态一致从底部弹出；内容区限高滚动，避免占满整屏 */}
       <Sheet
         open={open}
         onClose={() => setOpen(false)}
         title="筛选单词"
-        subtitle="组合等级、场景、掌握状态与词性，快速缩小范围"
+        subtitle="仅用于浏览；输入关键词查词时自动忽略筛选、检索全词库"
         footer={
-          <div className="flex gap-2">
-            <button
-              onClick={reset}
-              className="flex-1 rounded-[18px] border border-slate-200/70 bg-white/70 py-3 text-sm font-semibold text-slate-600 transition hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              重置
-            </button>
-            <button
-              onClick={() => setOpen(false)}
-              className="flex-[1.4] rounded-[18px] bg-slate-900 py-3 text-sm font-semibold text-white shadow-float transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
-            >
-              查看结果
-            </button>
-          </div>
+          <button
+            onClick={reset}
+            className="w-full rounded-[18px] border border-slate-200/70 bg-white/70 py-3 text-sm font-semibold text-slate-600 transition hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            重置
+          </button>
         }
       >
-        <div className="space-y-5 pb-1">
+        <div className="no-scrollbar max-h-[50dvh] space-y-4 overflow-y-auto pb-1">
           {!hideLevel && (route === 'grade' ? (
             <FilterGroup label="中式等级">
               <FilterChip active={gradeFilter === 'all'} onClick={() => setGradeFilter?.('all')}>
@@ -674,28 +691,6 @@ export function FilterBar({
             </FilterGroup>
           )}
 
-          <FilterGroup label="掌握状态">
-            <FilterChip active={commonOnly} onClick={() => setCommonOnly(!commonOnly)}>
-              ★ 只看常用
-            </FilterChip>
-            {showMasterChips && (
-              <>
-                <FilterChip active={!!showUnmastered} onClick={() => setShowUnmastered?.(!(showUnmastered ?? false))}>
-                  未掌握
-                </FilterChip>
-                <FilterChip active={!!showMastered} onClick={() => setShowMastered?.(!(showMastered ?? false))}>
-                  已掌握
-                </FilterChip>
-              </>
-            )}
-          </FilterGroup>
-
-          {displayMode && setDisplayMode && (
-            <FilterGroup label="卡片显示">
-              <DisplayModeToggle value={displayMode} onChange={setDisplayMode} />
-            </FilterGroup>
-          )}
-
           {posFilter && setPosFilter && (
             <FilterGroup label="词性">
               <PosFilterRow value={posFilter} onChange={setPosFilter} counts={posCounts} />
@@ -716,27 +711,34 @@ export function WordGrid({
   mode = 'both',
   onOpen,
   onToggleMastered,
+  resetKey,
 }: {
   words: Word[]
   masteredSet: Set<string>
   mode?: DisplayMode
   onOpen: (w: Word) => void
   onToggleMastered: (w: Word) => void
+  /** 筛选条件签名：只有它变化才重置渐进加载批次；标记掌握不该让整批卡片重新挂载 */
+  resetKey?: string
 }) {
   const groups = useMemo(() => groupByCategory(words), [words])
   const themeCount = useMemo(() => groups.reduce((s, g) => s + g.themes.length, 0), [groups])
 
   /** 渐进渲染：一次只挂载一批卡片，滚动到底自动追加。上千张卡片同时布局是切页卡顿的主因。 */
   const [limit, setLimit] = useState(GRID_BATCH)
-  useEffect(() => setLimit(GRID_BATCH), [words])
+  useEffect(() => setLimit(GRID_BATCH), [resetKey])
   const shown = Math.min(limit, words.length)
+  const hasMore = shown < words.length
   const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   const loadMore = () => setLimit((l) => l + GRID_BATCH)
 
+  // 只在「是否还有更多」变化时重建观察器：标记掌握让词数 -1 时不再触发一次批量追加，
+  // 列表只移除那一张卡片、其余自然向上补位，不会整屏闪一下。
   useEffect(() => {
+    if (!hasMore) return
     const el = sentinelRef.current
-    if (!el || shown >= words.length || typeof IntersectionObserver === 'undefined') return
+    if (!el || typeof IntersectionObserver === 'undefined') return
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) setLimit((l) => l + GRID_BATCH)
@@ -745,7 +747,7 @@ export function WordGrid({
     )
     io.observe(el)
     return () => io.disconnect()
-  }, [shown, words.length])
+  }, [hasMore])
 
   // 按分类 / 主题顺序截取前 shown 个词，保持分组结构
   const sliced = useMemo(() => {

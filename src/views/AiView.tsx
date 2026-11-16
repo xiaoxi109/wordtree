@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isConfigReady, loadLlmConfig, LLM_CONFIG_CHANGED_EVENT, type LlmConfig } from '../config/llm'
-import { TOPICS, sceneLabelText } from '../lib/cluster'
+import { TOPICS, buildMasteredPool, sceneLabelText } from '../lib/cluster'
+import { loadAiPrefs, saveAiPrefs } from '../lib/aiPrefs'
 import {
   LESSON_FORMATS,
   difficultyForRung,
   difficultyOptions,
   difficultyText,
+  recommendedOptionId,
+  resolveDifficulty,
   formatMeta,
   type Difficulty,
   type LessonFormatChoice,
@@ -13,9 +16,17 @@ import {
 import { useAiLessons } from '../hooks/useAiLessons'
 import { deleteLesson, listLessons, type Lesson } from '../db'
 import { getReviewWords } from '../lib/review'
-import { stripWTags } from '../lib/parse'
+import { stripMarkup } from '../lib/parse'
+import { usePlayback, type PlayMode } from '../lib/playback'
 import { MODE_LABEL, type LearningMode, type GeneratedPlan } from '../lib/planner'
-import type { Level } from '../data'
+import {
+  cacheAdvice,
+  collectDailyStats,
+  generateDailyAdvice,
+  getCachedAdvice,
+  type DailyAdvice,
+} from '../lib/dailyPlan'
+import type { Level, Word } from '../data'
 import { GRADE_RUNGS, LEVEL_RUNGS, type GradeRung, type LevelRung, type Route } from '../data/levels'
 import LessonReader from './LessonReader'
 import { Sheet } from '../components/Sheet'
@@ -27,7 +38,16 @@ import {
   SpinnerIcon,
   TrashIcon,
   XIcon,
+  RotateCcwIcon,
 } from '../components/icons'
+
+/** 生成中轮换的进度文案：LLM 耗时不可预估，用状态说明代替假的百分比 */
+const WRITING_HINTS = [
+  '正在挑选你已掌握的词…',
+  '正在构思情节与词句…',
+  '正在写英文正文与中文对照…',
+  '正在校对词汇难度…',
+]
 
 /**
  * AI 定制课程（单篇模式 + 因材施教）
@@ -41,35 +61,42 @@ import {
  *   - 单篇课程卡片列表
  *
  * 生成条件 Sheet：
- *   ① 三种模式大按钮（🎯巩固 / ✨日常 / 🚀拉伸）— 选了自动覆盖词数/难度/复习比
+ *   ① 三种模式大按钮（🎯巩固 / ✨日常 / 🚀拉伸）— 只覆盖词数/复习比/场景权重，不影响句式难度
  *   ② 句式难度（上方标「系统推荐 Y」）
- *   ③ 题材侧重
- *   ④ 课程体裁
+ *   ③ 内容场景（决定重点词来自哪些场景，选中后下方给出命中场景反馈）
+ *   ④ 文章形态（决定怎么写，不改变重点词来源；别扭组合给轻提示）
  *
  * 每篇重点词数完全由 src/lib/planner.ts 依据学习者画像动态推荐，不提供手动设置。
  */
 export default function AiView({
   masteredSet,
-  onApplyMark,
+  onOpenWord,
   onToast,
   active = true,
   readerLessonId,
   onOpenReader,
+  onSwitchReader,
   onBack,
   activeLevels,
   targetLevel,
+  myLevel,
   route = 'level',
   currentRung,
 }: {
   masteredSet: Set<string>
-  onApplyMark: (word: string[], mode: 'add' | 'remove') => void
+  /** 文章点词 → 打开全局统一的查词弹层 */
+  onOpenWord: (w: Word) => void
   onToast: (msg: string, type?: 'success' | 'error' | 'info') => void
   active?: boolean
   readerLessonId: string | null
   onOpenReader: (lessonId: string) => void
+  /** 列表连播切篇：替换栈顶，不增加返回栈深度 */
+  onSwitchReader: (lessonId: string) => void
   onBack: () => void
   activeLevels?: Level[]
   targetLevel?: Level | null
+  /** 设置里「我的等级」对应的 CEFR 等级（推荐难度的锚点） */
+  myLevel?: Level | null
   /** 设置里的学习路线：决定句式难度按西式等级还是中式年级显示 */
   route?: Route
   /** 设置里的「我的等级」 */
@@ -77,11 +104,59 @@ export default function AiView({
 }) {
   const [lessons, setLessons] = useState<Lesson[] | null>(null)
   const [mode, setMode] = useState<LearningMode>('daily')
-  const [topic, setTopic] = useState<(typeof TOPICS)[number]['id']>('random')
-  const [difficulty, setDifficulty] = useState<Difficulty>('adaptive')
-  const [format, setFormat] = useState<LessonFormatChoice>('auto')
+  // 题材 / 体裁沿用上次选择（只持久化这两项，其余跟随设置与画像）
+  const [topic, setTopicState] = useState<(typeof TOPICS)[number]['id']>(() => loadAiPrefs().topic)
+  const setTopic = useCallback((id: (typeof TOPICS)[number]['id']) => {
+    setTopicState(id)
+    saveAiPrefs({ topic: id })
+  }, [])
+  // 难度选择保存「选项 id」（中式路线=年级 id，西式=CEFR 档位 id），生成时再解析成内部难度
+  const [difficultyId, setDifficultyId] = useState<string>('adaptive')
+  const [format, setFormatState] = useState<LessonFormatChoice>(() => loadAiPrefs().format)
+  const setFormat = useCallback((f: LessonFormatChoice) => {
+    setFormatState(f)
+    saveAiPrefs({ format: f })
+  }, [])
   const [cfg, setCfg] = useState<LlmConfig>(loadLlmConfig())
   const [, setReviewCount] = useState(() => getReviewWords().length)
+
+  // ============ 今日学习计划（本地统计 + 可选的模型建议） ============
+  const [advice, setAdvice] = useState<DailyAdvice | null>(() => getCachedAdvice() ?? null)
+  const [planLoading, setPlanLoading] = useState(false)
+
+  const loadDailyPlan = useCallback(
+    async (force: boolean) => {
+      setPlanLoading(true)
+      try {
+        const stats = await collectDailyStats()
+        if (!force) {
+          const cached = getCachedAdvice()
+          if (cached) {
+            setAdvice(cached)
+            return
+          }
+        }
+        const next = await generateDailyAdvice(stats)
+        cacheAdvice(next)
+        setAdvice(next)
+      } catch {
+        /* 计划生成失败不影响主流程 */
+      } finally {
+        setPlanLoading(false)
+      }
+    },
+    [],
+  )
+
+  // 进入页面时：有缓存直接用，没有则生成一次
+  useEffect(() => {
+    if (!active) return
+    if (getCachedAdvice()) {
+      setAdvice(getCachedAdvice() ?? null)
+      return
+    }
+    void loadDailyPlan(false)
+  }, [active, loadDailyPlan])
 
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Lesson | null>(null)
@@ -94,14 +169,15 @@ export default function AiView({
     mode,
     activeLevels,
     targetLevel ?? null,
+    myLevel ?? null,
   )
-  // 难度选项的显示名跟随设置里的阶梯模式（内部值仍是 CEFR 档位）
-  const difficultyChoices = useMemo(
-    () => difficultyOptions(route, currentRung),
-    [route, currentRung],
-  )
+  // 难度选项跟随设置里的阶梯模式：西式=CEFR 档位，中式=每个年级一档
+  const difficultyChoices = useMemo(() => difficultyOptions(route), [route])
+  // 当前选中项解析出的内部难度；推荐项对应的选项 id
+  const selectedDifficulty = resolveDifficulty(route, difficultyId)
+  const recOptionId = recommendedOptionId(route, recommended.difficulty, currentRung)
   // 用户是否手动覆盖了系统推荐难度（词数跟随 planner 动态推荐，无覆盖）
-  const userOverrode = difficulty !== 'adaptive' && difficulty !== recommended.difficulty
+  const userOverrode = selectedDifficulty !== 'adaptive' && selectedDifficulty !== recommended.difficulty
 
   const refreshLessons = useCallback(async () => {
     try {
@@ -148,6 +224,19 @@ export default function AiView({
   const masteredCount = masteredSet.size
   const generating = progress.status === 'generating'
   const configReady = isConfigReady(cfg)
+
+  const [hintIndex, setHintIndex] = useState(0)
+  useEffect(() => {
+    if (!generating) {
+      setHintIndex(0)
+      return
+    }
+    const timer = window.setInterval(
+      () => setHintIndex((i) => (i + 1) % WRITING_HINTS.length),
+      2600,
+    )
+    return () => window.clearInterval(timer)
+  }, [generating])
   // 生成中的那篇由顶部进度卡单独展示，列表里不再重复出现一张「写作中…」卡
   const visibleLessons = useMemo(
     () => lessons?.filter((l) =>
@@ -156,10 +245,10 @@ export default function AiView({
     [lessons, generating, progress.lessonId],
   )
 
-  // 模式切换 / 掌握词数 / 目标等级变化都会改变推荐难度（除非用户手动 override 过）
+  // 只有「我的等级 / 掌握情况」会改变推荐难度；切换学习模式不影响难度，因此不在依赖里
   useEffect(() => {
-    if (!userOverrode) setDifficulty(recommended.difficulty)
-  }, [mode, recommended.difficulty, userOverrode])
+    if (!userOverrode) setDifficultyId(recOptionId)
+  }, [recOptionId, userOverrode])
 
   const startGenerate = async () => {
     if (generating) return
@@ -170,16 +259,17 @@ export default function AiView({
     try {
       // 词数完全交给 planner 的动态推荐；这里只可能覆盖用户手动选的难度。
       const overrides: { difficulty?: Difficulty } = {}
-      if (difficulty !== 'adaptive' && difficulty !== recommended.difficulty) overrides.difficulty = difficulty
+      if (userOverrode) overrides.difficulty = selectedDifficulty
 
       const lesson = await generate(
         masteredSet,
         cfg,
-        { topic, difficulty: difficulty === 'adaptive' ? recommended.difficulty : difficulty, format },
+        { topic, difficulty: selectedDifficulty === 'adaptive' ? recommended.difficulty : selectedDifficulty, format },
         mode,
         overrides.difficulty !== undefined ? overrides : undefined,
         activeLevels,
         targetLevel ?? null,
+        myLevel ?? null,
       )
       setLessons((prev) => (prev ? [lesson, ...prev] : [lesson]))
       onToast('开始写作中…', 'success')
@@ -188,25 +278,104 @@ export default function AiView({
     }
   }
 
-  const handleMark = useCallback(
-    (word: string, mode: 'add' | 'remove') => {
-      onApplyMark([word], mode)
-      setReviewCount(getReviewWords().length)
+  // ============ 播放模式 / 列表连播会话 ============
+  const [playback] = usePlayback()
+  /** 切篇后让阅读器自动开始播放的信号（每次 +1） */
+  const [autoStartToken, setAutoStartToken] = useState(0)
+  /** 列表随机播放：本轮已播过的篇目，避免重复 */
+  const listPlayedRef = useRef<Set<string>>(new Set())
+
+  // 切换模式即开始一轮新的列表连播会话，清掉旧的「已播」记录
+  useEffect(() => {
+    listPlayedRef.current.clear()
+  }, [playback.mode])
+
+  /** 本篇自然播完：按模式挑选下一篇并替换栈顶，随后由阅读器自动续播 */
+  const handleLessonEnd = useCallback(
+    (mode: PlayMode) => {
+      const pool = (lessons ?? []).filter((l) => l.status === 'ready')
+      const current = readerLessonId
+      if (!current || pool.length === 0) return
+      let nextId: string | null = null
+      if (mode === 'listSequential') {
+        const idx = pool.findIndex((l) => l.id === current)
+        nextId = idx >= 0 && idx + 1 < pool.length ? pool[idx + 1].id : null
+      } else {
+        listPlayedRef.current.add(current)
+        const candidates = pool.filter((l) => !listPlayedRef.current.has(l.id))
+        nextId = candidates.length
+          ? candidates[Math.floor(Math.random() * candidates.length)].id
+          : null
+      }
+      if (!nextId) {
+        onToast('列表已播完', 'info')
+        return
+      }
+      // 先给自动播放信号，再切篇；两者在同一个事件里批量更新
+      setAutoStartToken((t) => t + 1)
+      onSwitchReader(nextId)
     },
-    [onApplyMark],
+    [lessons, readerLessonId, onSwitchReader, onToast],
   )
+
+  const openLesson = (id: string) => {
+    // 手动打开课程视为新一轮连播：清掉随机历史，并复位自动播放信号，
+    // 否则上次列表连播留下的 token 会让新挂载的阅读器误以为要自动播放。
+    listPlayedRef.current.clear()
+    setAutoStartToken(0)
+    onOpenReader(id)
+  }
+
+  /**
+   * 以下三个 useMemo 必须放在「阅读器早退」之前。
+   * 早退（打开文章时 return <LessonReader/>）之后的 Hook 不会被调用，
+   * React 会抛 "Rendered fewer hooks than expected" 并导致整页白屏。
+   */
+  // 已掌握词按场景计数：用于「题材 → 命中场景」的即时反馈
+  const masteredCatCount = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const w of buildMasteredPool(masteredSet)) {
+      if (w.category) m.set(w.category, (m.get(w.category) ?? 0) + 1)
+    }
+    return m
+  }, [masteredSet])
+
+  /** 题材命中情况：让用户看到这次的重点词会从哪些场景抽，以及是否回退 */
+  const topicFeedback = useMemo(() => {
+    const meta = TOPICS.find((t) => t.id === topic)
+    if (!meta || topic === 'random') {
+      return { text: '不限定题材：按你的画像权重从全部已掌握词里挑场景。', tone: 'muted' as const }
+    }
+    const hits = meta.categories.filter((c) => (masteredCatCount.get(c) ?? 0) > 0)
+    const total = hits.reduce((s, c) => s + (masteredCatCount.get(c) ?? 0), 0)
+    if (hits.length === 0) {
+      return {
+        text: `已掌握词里暂时没有「${meta.label}」相关场景，会回退到其他场景；可先去词库多标记一些词。`,
+        tone: 'warn' as const,
+      }
+    }
+    return {
+      text: `重点词来自：${hits.map((c) => sceneLabelText(c)).join(' / ')}（共 ${total} 个已掌握词）`,
+      tone: 'muted' as const,
+    }
+  }, [topic, masteredCatCount])
+
+  const formatTopicNote = useMemo(() => comboNote(topic, format), [topic, format])
 
   /* ------------------------------ 阅读器 ------------------------------ */
   if (readerLessonId) {
     return (
       <LessonReader
+        key={readerLessonId}
         lessonId={readerLessonId}
         onBack={onBack}
-        onApplyMark={handleMark}
-        onRetrySingle={(id) => resume(id, cfg).then(() => void refreshLessons())}
+        onOpenWord={onOpenWord}
+        onRetrySingle={(id) => resume(id, cfg, masteredSet).then(() => void refreshLessons())}
         busy={generating}
         active={active}
         onToast={onToast}
+        onLessonEnd={handleLessonEnd}
+        autoStartToken={autoStartToken}
       />
     )
   }
@@ -215,8 +384,8 @@ export default function AiView({
 
   const modeMeta = MODE_LABEL[mode]
   const topicLabel = TOPICS.find((t) => t.id === topic)?.label ?? '随机'
-  const difficultyLabel = difficultyText(route, difficulty, currentRung)
-  const recommendedDifficultyLabel = difficultyText(route, recommended.difficulty, currentRung)
+  const difficultyLabel = difficultyText(route, difficultyId)
+  const recommendedDifficultyLabel = difficultyText(route, recOptionId)
   const rungMetaLabel = route === 'grade'
     ? GRADE_RUNGS.find((g) => g.id === currentRung)?.label
     : LEVEL_RUNGS.find((l) => l.id === currentRung)?.label
@@ -227,13 +396,61 @@ export default function AiView({
     // 固定头 + 内部独立滚动：标题/生成卡不在任何滚动容器里，物理上不会位移
     // 可用高度 = 100dvh - main顶 padding(safe+16) - main底 padding(safe+78 底导航)
     <div className="flex h-[calc(100dvh_-_env(safe-area-inset-top)_-_16px_-_env(safe-area-inset-bottom)_-_78px)] flex-col overflow-hidden">
-      {/* 固定头：标题 + 生成卡 */}
+      {/* 固定头：标题 + 今日计划 + 生成卡 */}
       <div className="shrink-0 pb-2">
+        {/* 今日学习计划 */}
+        {advice && (
+          <section className="mb-2 rounded-[18px] border border-fuchsia-200/60 bg-gradient-to-br from-fuchsia-50 via-white to-white p-3.5 shadow-sm dark:border-fuchsia-500/25 dark:from-fuchsia-500/10 dark:via-slate-800/40 dark:to-slate-800/40">
+            <div className="flex items-center gap-2">
+              <SparklesIcon width={14} height={14} className="shrink-0 text-fuchsia-600 dark:text-fuchsia-300" />
+              <p className="min-w-0 flex-1 text-[13px] font-bold leading-snug text-slate-800 dark:text-slate-100 line-clamp-2">
+                {advice.headline}
+              </p>
+              <span className="shrink-0 rounded-full bg-slate-900/[0.05] px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-400">
+                约 {advice.minutes} 分钟
+              </span>
+              <button
+                onClick={() => void loadDailyPlan(true)}
+                disabled={planLoading}
+                aria-label="重新生成今日计划"
+                className="shrink-0 rounded-[10px] p-1 text-slate-400 transition active:scale-95 disabled:opacity-40"
+              >
+                <RotateCcwIcon width={14} height={14} />
+              </button>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {advice.actions.map((a) => (
+                <li key={a.label} className="flex items-baseline gap-2 text-[12px] leading-relaxed">
+                  <span className="shrink-0 rounded-[8px] bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-bold text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300">
+                    {a.label}
+                  </span>
+                  <span className="min-w-0 flex-1 text-slate-500 dark:text-slate-400">{a.detail}</span>
+                </li>
+              ))}
+            </ul>
+            {advice.focusWords.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {advice.focusWords.map((w) => (
+                  <span
+                    key={w}
+                    className="rounded-full border border-slate-900/[0.06] px-2 py-0.5 font-display text-[11px] font-semibold text-slate-600 dark:border-white/10 dark:text-slate-300"
+                  >
+                    {w}
+                  </span>
+                ))}
+              </div>
+            )}
+            {advice.source === 'local' && (
+              <p className="mt-1.5 text-[10px] text-slate-400">配置大模型后，这里会给出更贴合你的建议</p>
+            )}
+          </section>
+        )}
+
         <div className="mb-2 flex items-end gap-2">
           <h2 className="font-display text-[18px] font-semibold tracking-tight text-slate-900 dark:text-slate-50">
             AI 定制课程
           </h2>
-          <span className="truncate text-[11px] text-slate-400">一次一篇 · 因材施教</span>
+          <span className="truncate text-[11px] text-slate-400">因材施教</span>
         </div>
 
         {/* 推荐状态 + 生成按钮 + 自定义条件：合并成一块 */}
@@ -249,7 +466,7 @@ export default function AiView({
               {modeMeta.emoji} {modeMeta.label}
             </span>
             <span className="text-[13px] font-bold text-slate-800 dark:text-slate-100">
-              {recommended.wordsPerLesson} 词 · {recommendedDifficultyLabel}
+              {recommendedDifficultyLabel}
             </span>
           </div>
           <button
@@ -265,9 +482,6 @@ export default function AiView({
             生成一篇
           </button>
         </div>
-        <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-          {recommended.reason}
-        </p>
         {masteredCount === 0 && (
           <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
             去「词库」标记「已掌握」，这里就能开写。
@@ -284,7 +498,7 @@ export default function AiView({
           className="mt-2 flex w-full items-center gap-2 rounded-[10px] bg-slate-900/[0.04] px-3 py-1.5 text-left transition hover:bg-slate-900/[0.07] active:scale-[0.995] dark:bg-white/[0.06] dark:hover:bg-white/10"
         >
           <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-400">
-            自定义：{modeMeta.label} · 词数 {recommended.wordsPerLesson}（自动） · 难度 {difficultyLabel} · {topicLabel}
+            自定义：{modeMeta.label} · 难度 {difficultyLabel} · {topicLabel}
           </span>
           <ChevronRightIcon width={14} height={14} className="shrink-0 text-slate-300" />
         </button>
@@ -293,28 +507,40 @@ export default function AiView({
 
       {/* ③ 实时生成进度（生成中替换生成卡，同样固定） */}
       {generating && (
-        <section className="surface mb-2 p-4">
-          <div className="mb-2 flex items-center gap-2">
-            <SpinnerIcon width={14} height={14} className="animate-spin text-brand-500" />
-            <p className="text-sm font-bold text-slate-700 dark:text-slate-100">
-              正在写作…
-            </p>
+        <section className="mb-2 rounded-[18px] border border-brand-200/60 bg-gradient-to-br from-brand-50 via-white to-white p-3.5 shadow-sm dark:border-brand-500/25 dark:from-brand-500/10 dark:via-slate-800/40 dark:to-slate-800/40">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] bg-white/85 text-brand-600 shadow-sm dark:bg-slate-800/70 dark:text-brand-300">
+              <SparklesIcon width={19} height={19} className="animate-pulse" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-bold text-slate-800 dark:text-slate-100">正在为你写课文…</p>
+              <p className="mt-0.5 truncate text-[11px] text-slate-500 dark:text-slate-400">
+                {progress.sceneLabel || '准备词库'}
+              </p>
+            </div>
             <button
               onClick={cancel}
-              className="ml-auto rounded-full p-1.5 text-slate-400 transition hover:bg-slate-900/5 dark:hover:bg-white/10"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/70 text-slate-400 transition hover:bg-white hover:text-slate-700 active:scale-95 dark:bg-slate-800/60 dark:text-slate-300"
               aria-label="取消生成"
             >
-              <XIcon width={16} height={16} />
+              <XIcon width={15} height={15} />
             </button>
           </div>
-          <div className="h-1 w-full overflow-hidden rounded-full bg-slate-900/[0.07] dark:bg-white/10">
-            <div className="h-full w-2/3 rounded-full bg-brand-500 animate-pulse" />
+
+          <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-brand-100/70 dark:bg-white/10">
+            <div className="progress-indeterminate h-full rounded-full bg-gradient-to-r from-brand-400 to-brand-600" />
+          </div>
+          <div className="mt-2 flex items-center gap-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+            <SpinnerIcon width={12} height={12} className="shrink-0 animate-spin text-brand-500" />
+            <span key={hintIndex} className="animate-fade-in truncate">
+              {WRITING_HINTS[hintIndex]}
+            </span>
           </div>
         </section>
       )}
 
       {/* ④ 列表标题行：固定，不随列表滚动 */}
-      <div className="mb-1.5 flex items-center justify-between">
+      <div className="mb-1.5 flex items-center justify-between gap-2">
         <p className="eyebrow">我的课程</p>
         {visibleLessons && visibleLessons.length > 0 && (
           <span className="text-[11px] text-slate-400">{visibleLessons.length} 篇</span>
@@ -339,7 +565,7 @@ export default function AiView({
             <LessonCard
               key={l.id}
               lesson={l}
-              onOpen={() => onOpenReader(l.id)}
+              onOpen={() => openLesson(l.id)}
               onDelete={() => setDeleteTarget(l)}
             />
           ))}
@@ -405,7 +631,7 @@ export default function AiView({
               </p>
               <p className="text-[10px] font-semibold text-brand-600 dark:text-brand-300">
                 系统推荐 {recommendedDifficultyLabel}
-                {difficulty !== 'adaptive' && difficulty !== recommended.difficulty && ' · 已自定义'}
+                {userOverrode && ' · 已自定义'}
               </p>
             </div>
             {myRungLabel && (
@@ -415,16 +641,16 @@ export default function AiView({
             )}
             <div className="no-scrollbar flex flex-wrap gap-1.5">
               {difficultyChoices.map((d) => {
-                const rec = d.id === recommended.difficulty
+                const rec = d.id === recOptionId
                 return (
                   <button
                     key={d.id}
-                    onClick={() => setDifficulty(d.id as Difficulty)}
-                    className={`chip-on ${difficulty === d.id ? '' : 'chip-off'} ${rec ? 'ring-1 ring-brand-400/60' : ''}`}
+                    onClick={() => setDifficultyId(d.id)}
+                    className={`chip-on ${difficultyId === d.id ? '' : 'chip-off'} ${rec ? 'ring-1 ring-brand-400/60' : ''}`}
                   >
                     {d.label}
                     {rec && <span className="ml-0.5 text-[9px] text-brand-500">✦</span>}
-                    {d.id === myDifficulty && (
+                    {myDifficulty !== null && d.difficulty === myDifficulty && !rec && (
                       <span className="ml-0.5 text-[9px] text-slate-400 dark:text-slate-500">· 我的等级</span>
                     )}
                   </button>
@@ -439,22 +665,26 @@ export default function AiView({
           </div>
 
           <OptionGroup
-            label="题材侧重"
+            label="内容场景"
             value={topic}
             options={TOPICS.map((t) => ({ id: t.id, label: t.label }))}
             onChange={(id) => setTopic(id as (typeof TOPICS)[number]['id'])}
-            hint="指定题材时加权挑选该题材下的场景；随机则按你的画像自适应。"
+            hint="决定这一篇的重点词从哪些场景来，不改变文章写法。"
+            note={topicFeedback.text}
+            noteTone={topicFeedback.tone}
           />
 
           <OptionGroup
-            label="课程体裁"
+            label="文章形态"
             value={format}
             options={[
               { id: 'auto', label: '✨ 自动混搭' },
               ...LESSON_FORMATS.map((f) => ({ id: f.id, label: `${f.emoji} ${f.label}` })),
             ]}
             onChange={(id) => setFormat(id as LessonFormatChoice)}
-            hint={format === 'auto' ? '每次生成随机挑一种体裁' : formatMeta(format).brief}
+            hint={format === 'auto' ? '自动混搭：每次换一种写法，并尽量不和上一篇重复。' : formatMeta(format).brief}
+            note={formatTopicNote ?? '只改变写法，不改变重点词来源；重点词仍来自上面的「内容场景」。'}
+            noteTone={formatTopicNote ? 'warn' : 'muted'}
           />
         </div>
       </Sheet>
@@ -527,7 +757,7 @@ function LessonCard({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[13px] font-bold text-slate-800 dark:text-slate-100">
-            {stripWTags(lesson.title) || '写作中…'}
+            {stripMarkup(lesson.title) || '写作中…'}
           </span>
           {lesson.status !== 'ready' && <LessonStatusBadge status={lesson.status} />}
         </div>
@@ -544,14 +774,6 @@ function LessonCard({
             <span className="text-rose-500 line-clamp-1">{lesson.error}</span>
           )}
         </div>
-        {lesson.coverage_total && lesson.coverage_total > 0 && (
-          <p className="mt-1 text-[11px] text-slate-400">
-            覆盖 {lesson.coverage_hit}/{lesson.coverage_total}
-            {lesson.coverage_real_words
-              ? ` · 用词 ${Math.round(((lesson.coverage_known ?? 0) / lesson.coverage_real_words) * 100)}% 来自你的词库`
-              : ''}
-          </p>
-        )}
       </div>
 
       {onDelete && (
@@ -579,18 +801,41 @@ function LessonStatusBadge({ status }: { status: Lesson['status'] }) {
   return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ${s.cls}`}>{s.label}</span>
 }
 
+/**
+ * 少数语义别扭的「内容场景 × 文章形态」组合：只提示，不禁用。
+ * 系统仍会照常生成，用户可自行判断。
+ */
+function comboNote(topic: (typeof TOPICS)[number]['id'], format: LessonFormatChoice): string | null {
+  if (format === 'auto' || topic === 'random') return null
+  if (format === 'poem' && (topic === 'tech' || topic === 'work')) {
+    return '韵律小诗更适合动物童趣 / 日常生活题材，这一组合读起来可能偏生硬。'
+  }
+  if (format === 'diary' && (topic === 'tech' || topic === 'work')) {
+    return '日记体更适合日常生活 / 校园题材，这一组合可能略显别扭。'
+  }
+  if (format === 'email' && topic === 'story') {
+    return '邮件便条更适合日常 / 职场题材，动物童趣题材不太好落笔。'
+  }
+  return null
+}
+
 function OptionGroup({
   label,
   value,
   options,
   onChange,
   hint,
+  note,
+  noteTone = 'muted',
 }: {
   label: string
   value: string
   options: { id: string; label: string }[]
   onChange: (id: string) => void
   hint?: string
+  /** 额外反馈行：题材命中场景 / 组合提示 */
+  note?: string | null
+  noteTone?: 'muted' | 'warn'
 }) {
   return (
     <div>
@@ -607,6 +852,17 @@ function OptionGroup({
         ))}
       </div>
       {hint && <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">{hint}</p>}
+      {note && (
+        <p
+          className={`mt-1 text-[11px] leading-relaxed ${
+            noteTone === 'warn'
+              ? 'text-amber-600 dark:text-amber-300'
+              : 'text-brand-600/85 dark:text-brand-300/85'
+          }`}
+        >
+          {note}
+        </p>
+      )}
     </div>
   )
 }

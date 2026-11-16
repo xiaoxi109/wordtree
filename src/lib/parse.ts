@@ -51,13 +51,14 @@ export function parseLessonContent(obj: unknown): LessonContent {
     const s = item as Record<string, unknown>
     const en = str(s.en ?? s.text ?? s.english)
     if (!en) continue
-    const zh = str(s.zh ?? s.translation ?? s.ch)
-    const speaker = str(s.speaker ?? s.role ?? s.name) || undefined
+    // 中文译文/角色名不能有标签：模型常把英文正文的 <w> 标记照搬成 <哥哥>
+    const zh = stripMarkup(str(s.zh ?? s.translation ?? s.ch))
+    const speaker = stripMarkup(str(s.speaker ?? s.role ?? s.name)) || undefined
     segments.push(speaker ? { speaker, en, zh } : { en, zh })
   }
   if (segments.length === 0) throw new Error('segments 全部无效')
 
-  const title = str(o.title) || DEFAULT_TITLE[kind]
+  const title = stripMarkup(str(o.title)) || DEFAULT_TITLE[kind]
   return { kind, title, segments }
 }
 
@@ -71,6 +72,27 @@ export function hasWTags(en: string): boolean {
 
 export function stripWTags(en: string): string {
   return en.replace(/<\/?w>/g, '')
+}
+
+/**
+ * 清洗「纯文本字段」里的模型标记（中文译文 / 标题 / 角色名）。
+ * 模型常把英文正文的 <w>重点词</w> 照搬成中文的 <哥哥>、<w>哥哥</w> 或 <<哥哥>>，
+ * 这里只剥掉尖括号与标签名、保留其中的文字，避免译文出现乱码括号。
+ * 注意：英文正文的 <w> 是有意保留给点词高亮用的，不要对它调用本函数。
+ */
+export function stripMarkup(text: string): string {
+  let prev = text
+  // 多轮处理嵌套写法，如 <<哥哥>> / <w><哥哥></w>
+  for (let i = 0; i < 3; i += 1) {
+    const next = prev
+      // <w> / </w> / <br/> 这类英文标签整体删掉，标签名不该出现在译文里
+      .replace(/<\/?[a-zA-Z][a-zA-Z0-9]*\s*\/?>/g, '')
+      // <哥哥> 这类「中文词被尖括号包住」：只剥括号，保留里面的文字
+      .replace(/<([^<>]*)>/g, '$1')
+    if (next === prev) break
+    prev = next
+  }
+  return prev.trim()
 }
 
 /** 词表检索索引：变体（复数/时态等）→ 词键。 */

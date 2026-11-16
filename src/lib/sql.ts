@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS lessons (
   coverage_total      INTEGER,
   coverage_known      INTEGER,
   coverage_real_words INTEGER,
+  coverage_mastered   INTEGER,
   read_at             BIGINT,
   created_at          BIGINT NOT NULL,
   updated_at          BIGINT NOT NULL
@@ -123,7 +124,7 @@ export function lessonToSQL(
     'id', 'title', 'kind', 'generation_mode', 'scene_label', 'scene_category',
     'condition_topic', 'condition_difficulty', 'condition_format',
     'status', 'error', 'coverage_hit', 'coverage_total',
-    'coverage_known', 'coverage_real_words', 'read_at', 'created_at', 'updated_at',
+    'coverage_known', 'coverage_real_words', 'coverage_mastered', 'read_at', 'created_at', 'updated_at',
   ]
   const lessonVals = lessonCols.map((c) => esc((lesson as any)[c])).join(', ')
   ids.push(`INSERT INTO lessons (${lessonCols.join(', ')}) VALUES (${lessonVals});`)

@@ -14,7 +14,6 @@ import { useSpeech } from '../hooks/useSpeech'
 import { appendWordEvent, directionFromDisplayMode } from '../lib/events'
 import type { Route } from '../data/levels'
 import { CheckIcon, RotateCcwIcon, XIcon, EyeIcon, EyeOffIcon } from '../components/icons'
-import { SentenceStudyDeck } from '../components/SentenceStudyDeck'
 
 type Stats = { again: number; good: number }
 const EMPTY_STATS: Stats = { again: 0, good: 0 }
@@ -32,8 +31,8 @@ function shuffleCards<T>(arr: T[]): T[] {
  * 复习页面：只有「认识 / 不认识」两态。
  * 布局：整页 flex-col 三段——顶部筛选常驻 + 中间闪卡独立滚动 + 底部判级按钮贴底。
  * 无滑动手势，判级完全依赖底部按钮。
- * 牌堆为混合牌堆（错词/到期 + 新词 + 已掌握补位），见底自动补下一批并排除已练词，
- * 只有确实无词可练才显示结算页。
+ * 牌堆只放「已掌握」的词（masteredOnly）：到期优先，其余按最久未复习补位；
+ * 见底自动补下一批并排除已练词，只有确实无词可练才显示结算页。
  *
  * 三种显示模式下的内容策略（见用户第 3 条需求）：
  *  - zh  → 正面：中文释义 + 词性 + 等级 + 徽章；展开：英文词形+音标
@@ -47,13 +46,9 @@ interface StudyViewProps {
   active?: boolean
 }
 
-/** 复习页外壳：单词 / 短句两种牌堆共用一个入口。 */
+/** 复习页：只复习单词。 */
 export default function StudyView(props: StudyViewProps) {
-  const [mode, setMode] = useState<'word' | 'sentence'>('word')
-  if (mode === 'sentence') {
-    return <SentenceStudyDeck active={props.active} onSwitch={() => setMode('word')} />
-  }
-  return <WordStudyDeck {...props} onSwitchToSentence={() => setMode('sentence')} />
+  return <WordStudyDeck {...props} />
 }
 
 function WordStudyDeck({
@@ -61,8 +56,7 @@ function WordStudyDeck({
   masteredSet,
   onApplyMark,
   active = true,
-  onSwitchToSentence,
-}: StudyViewProps & { onSwitchToSentence: () => void }) {
+}: StudyViewProps) {
   const [shuffleOn, setShuffleOn] = useState(true)
   const [autoplay, setAutoplay] = useState(false)
   const [displayMode, setDisplayMode] = useDisplayMode()
@@ -70,7 +64,7 @@ function WordStudyDeck({
   const [index, setIndex] = useState(0)
   const [revealed, setRevealed] = useState(false)
   const [stats, setStats] = useState<Stats>({ ...EMPTY_STATS })
-  const [dueCount, setDueCount] = useState(() => getDueCount())
+  const [dueCount, setDueCount] = useState(() => getDueCount(Date.now(), masteredSet))
   const [todayCount, setTodayCount] = useState(() => getTodayStudiedCount())
   const [shownAt, setShownAt] = useState(() => Date.now())
   const { speak, stop } = useSpeech()
@@ -82,18 +76,18 @@ function WordStudyDeck({
   const [exhausted, setExhausted] = useState(false)
 
   const refreshCounts = useCallback(() => {
-    setDueCount(getDueCount())
+    setDueCount(getDueCount(Date.now(), masteredRef.current))
     setTodayCount(getTodayStudiedCount())
   }, [])
 
-  // 混合牌堆：错词/到期优先（最多 60%），再补新词与已掌握词，
-  // 不会因「只标记了 1 个词」而一点就结束。
+  // 牌堆只放「已掌握」的词：SRS 到期优先，其余按最久未复习补位。
   const buildDeck = useCallback(
     () =>
       buildStudySession({
         source: 'cefr',
         scope: 'all',
         wrongOnly: false,
+        masteredOnly: true,
         masteredSet: masteredRef.current,
       }),
     [],
@@ -221,23 +215,12 @@ function WordStudyDeck({
       {/* ── 1. 固定顶部筛选区（圆角卡片） ── */}
       <section className="shrink-0 pb-2 pt-1">
         <div className="no-scrollbar flex items-center gap-1 overflow-x-auto rounded-[16px] border border-slate-200/70 bg-white/90 px-2 py-1.5 backdrop-blur-sm dark:border-white/[0.06] dark:bg-slate-900/90">
-          <div className="flex shrink-0 items-center rounded-full bg-slate-100 p-0.5 dark:bg-white/10">
-            <span className="rounded-full bg-brand-600 px-2 py-0.5 text-[11px] font-semibold text-white">单词</span>
-            <button
-              type="button"
-              onClick={onSwitchToSentence}
-              className="rounded-full px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:text-slate-300"
-            >
-              短句
-            </button>
-          </div>
-
           <button
             onClick={() => setShuffleOn((v) => !v)}
             aria-pressed={shuffleOn}
             className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
               shuffleOn
-                ? 'bg-brand-600 text-white shadow-sm'
+                ? 'bg-brand-50 text-brand-700 shadow-sm dark:bg-brand-400/20 dark:text-brand-100'
                 : 'bg-slate-100 text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
             }`}
           >
@@ -249,7 +232,7 @@ function WordStudyDeck({
             aria-pressed={autoplay}
             className={`shrink-0 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-semibold transition ${
               autoplay
-                ? 'bg-brand-600 text-white shadow-sm'
+                ? 'bg-brand-50 text-brand-700 shadow-sm dark:bg-brand-400/20 dark:text-brand-100'
                 : 'bg-slate-100 text-slate-600 dark:bg-white/[0.06] dark:text-slate-300'
             }`}
           >
@@ -275,7 +258,7 @@ function WordStudyDeck({
           </span>
         </div>
         {/* 项目风格卡片：跟 WordDetailBody 对齐 */}
-        <div className="flex flex-1 flex-col rounded-[26px] border border-slate-200/60 bg-white/90 p-5 shadow-float dark:border-white/[0.06] dark:bg-slate-800/60">
+        <div className="flex flex-1 flex-col rounded-[26px] border border-slate-200/60 bg-white/90 p-5 shadow-card dark:border-white/[0.06] dark:bg-slate-800/60">
           <div className="w-full">
           {/* 卡头：标题 inline 徽章 + 发音 + 眼睛 toggle */}
           <div className="flex items-start justify-between gap-2">
@@ -471,7 +454,7 @@ function FinishScreen({
 }) {
   const total = stats.again + stats.good
   return (
-    <div className="rounded-[26px] border border-slate-200/60 bg-white/85 p-6 text-center shadow-float dark:border-slate-700/50 dark:bg-slate-800/60">
+    <div className="rounded-[26px] border border-slate-200/60 bg-white/85 p-6 text-center shadow-card dark:border-slate-700/50 dark:bg-slate-800/60">
       {empty ? (
         <>
           <h2 className="font-display text-lg font-semibold text-slate-900 dark:text-slate-50">

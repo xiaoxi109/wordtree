@@ -43,6 +43,8 @@ export interface Lesson {
   coverage_total?: number
   coverage_known?: number
   coverage_real_words?: number
+  /** 正文中「仅来自已掌握词」的实词数（区别于 coverage_known 的「已掌握+本篇重点词」） */
+  coverage_mastered?: number
   read_at?: number
   created_at: number
   updated_at: number
@@ -255,7 +257,7 @@ export async function saveLessonContent(
   title: string,
   kind: LessonKind,
   segments: LessonSegment[],
-  coverage: { hit: number; total: number; missing?: string[]; known?: number; realWords?: number },
+  coverage: { hit: number; total: number; missing?: string[]; known?: number; realWords?: number; mastered?: number },
 ): Promise<void> {
   const sortedSegments = [...segments]
     .sort((a, b) => a.position - b.position)
@@ -270,6 +272,7 @@ export async function saveLessonContent(
     doc.coverage_total = coverage.total
     doc.coverage_known = coverage.known
     doc.coverage_real_words = coverage.realWords
+    doc.coverage_mastered = coverage.mastered
     doc.updated_at = Date.now()
   })
 }
