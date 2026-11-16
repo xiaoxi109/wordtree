@@ -26,6 +26,7 @@ import StudyView from './views/StudyView'
 import SentenceView from './views/SentenceView'
 import AiView from './views/AiView'
 import ChallengesView from './views/ChallengesView'
+import SpiritView from './views/SpiritView'
 import PhonicsView from './views/PhonicsView'
 import { WordModal } from './components/word'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -58,6 +59,7 @@ type Page =
   | { kind: 'ai-reader'; lessonId: string }
   | { kind: 'quiz' }
   | { kind: 'challenge' }
+  | { kind: 'spirit' }
   | { kind: 'phonics' }
 
 /**
@@ -446,6 +448,8 @@ export default function App() {
         return { title: '晋级闯关', sub: '抽检当前级单词 · 通过可晋级' }
       case 'challenge':
         return { title: '闯关', sub: '' }
+      case 'spirit':
+        return { title: '我的词灵', sub: 'AI 设定 · 真实战绩养成' }
       case 'phonics':
         return { title: '自然拼读 · 音标', sub: '音标表 · 拼读规则 · 听辨练习' }
     }
@@ -540,6 +544,14 @@ export default function App() {
             }}
           />
         )
+      case 'spirit':
+        return (
+          <SpiritView
+            masteredWords={masteredWords}
+            activeWords={activeWords}
+            onStudy={() => pushPage({ kind: 'study' })}
+          />
+        )
       case 'phonics':
         return <PhonicsView active={pages[pages.length - 1]?.kind === 'phonics'} />
     }
@@ -619,6 +631,7 @@ export default function App() {
                 onToast={pushToast}
                 active={view === 'ai'}
                 readerLessonId={aiReaderLessonId}
+                onOpenSpirits={() => pushPage({ kind: 'spirit' })}
                 onOpenReader={(lessonId) => pushPage({ kind: 'ai-reader', lessonId })}
                 onSwitchReader={(lessonId) => replaceTopPage({ kind: 'ai-reader', lessonId })}
                 onBack={popPage}

@@ -19,6 +19,7 @@ import {
   SparklesIcon,
 } from '../components/icons'
 import { loadLlmConfig, isConfigReady } from '../config/llm'
+import { ensureChallengeStory, getChallengeStory, type ChallengeStory } from '../lib/challengeStory'
 import {
   WordPickGame,
   ListenPickGame,
@@ -92,6 +93,21 @@ export default function ChallengesView({
   // AI 玩法需要大模型；未配置时在卡片上提示并禁用
   const llmReady = isConfigReady(loadLlmConfig())
 
+  // 剧情：进入某个玩法的关卡列表时加载（缓存优先，无缓存让 AI 创作）
+  const [story, setStory] = useState<ChallengeStory | undefined>(() =>
+    game ? getChallengeStory(game.id) : undefined,
+  )
+  useEffect(() => {
+    if (!game) return
+    let alive = true
+    void ensureChallengeStory(game.id, game.levelCount).then((s) => {
+      if (alive) setStory(s)
+    })
+    return () => {
+      alive = false
+    }
+  }, [game?.id, game?.levelCount])
+
   // 各玩法的星级总览（progressVersion 变化时重算）
   const gameStars = useMemo(() => {
     const list = CHALLENGE_GAMES.map((g) => [g.id, getGameStars(g.id, g.levelCount)] as const)
@@ -118,6 +134,7 @@ export default function ChallengesView({
           level={level}
           pool={pool}
           onMaster={onMaster}
+          chapter={story?.chapters[level]}
           onExit={() => setLevel(null)}
           onNextLevel={nextUnlocked ? () => setLevel(level + 1) : undefined}
         />
@@ -145,7 +162,23 @@ export default function ChallengesView({
           </div>
         </div>
 
-        <div className="mt-2 space-y-2.5">
+        {/* AI 剧情主线 */}
+        {story && (
+          <div className="mt-3 rounded-[18px] border border-fuchsia-200/60 bg-gradient-to-br from-fuchsia-50 via-white to-white p-3.5 dark:border-fuchsia-500/25 dark:from-fuchsia-500/10 dark:via-slate-800/40 dark:to-slate-800/40">
+            <div className="flex items-center gap-1.5">
+              <SparklesIcon width={13} height={13} className="text-fuchsia-600 dark:text-fuchsia-300" />
+              <p className="text-[13px] font-bold text-slate-800 dark:text-slate-100">{story.title}</p>
+            </div>
+            <p className="mt-1.5 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400">
+              {story.premise}
+            </p>
+            <p className="mt-2 text-[11px] font-semibold text-fuchsia-700 dark:text-fuchsia-300">
+              {story.heroName} vs {story.rivalName}
+            </p>
+          </div>
+        )}
+
+        <div className="mt-3 space-y-2.5">
           {Array.from({ length: game.levelCount }, (_, i) => {
             const unlocked = isLevelUnlocked(game.id, i)
             const stars = getLevelStars(game.id, i)
@@ -169,7 +202,9 @@ export default function ChallengesView({
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[14px] font-bold text-slate-900 dark:text-slate-50">第 {i + 1} 关</p>
-                  <p className="mt-0.5 truncate text-[11px] text-slate-400">{levelHint(i)}</p>
+                  <p className="mt-0.5 truncate text-[11px] text-slate-400">
+                    {story?.chapters[i]?.intro ?? levelHint(i)}
+                  </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-0.5">
                   {[0, 1, 2].map((k) => (

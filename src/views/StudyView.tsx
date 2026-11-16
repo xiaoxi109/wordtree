@@ -8,6 +8,7 @@ import {
   type StudyCard,
 } from '../lib/study'
 import { posShort } from '../lib/pos'
+import { applyBattleResult } from '../lib/spirit'
 import { SpeakerBtn, LevelBadge, GradeBadge } from '../components/word'
 import { DisplayModeToggle, useDisplayMode } from '../components/display'
 import { useSpeech } from '../hooks/useSpeech'
@@ -142,6 +143,8 @@ function WordStudyDeck({
 
       applyStudyGrade(card.key, grade === 'good' ? 'good' : 'again')
       onApplyMark([card.word], grade === 'good' ? 'add' : 'remove')
+      // 词灵同步战斗结果（未收服的词不处理）
+      applyBattleResult(card.word, grade === 'good')
 
       void appendWordEvent({
         word_key: card.key,

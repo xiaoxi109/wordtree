@@ -2,6 +2,7 @@ import { wordKey } from './cluster'
 import { applyStudyGrade } from './study'
 import { pushReviewWord } from './review'
 import { appendWordEvent } from './events'
+import { applyBattleResult } from './spirit'
 
 /**
  * 闯关只需要词条的最小字段集：词形 / 释义 / 音标 / 词性。
@@ -144,6 +145,10 @@ export interface ChallengeQuestion {
   hint?: string
   /** AI 讲解：答错时展示 */
   note?: string
+  /** AI 题型：不同考法在题干区呈现不同内容 */
+  kind?: 'meaning' | 'cloze' | 'synonym' | 'antonym' | 'root'
+  /** cloze 情境句 / root 词根提示 */
+  promptText?: string
 }
 
 /** Fisher–Yates 洗牌（不改原数组）。 */
@@ -275,6 +280,9 @@ export function recordChallengeResult(outcome: ChallengeOutcome, gameId: string)
     reaction_ms: Math.max(0, Math.round(outcome.reactionMs)),
     context_id: gameId,
   }).catch((err) => console.error('写入闯关事件失败:', err))
+
+  // 词灵同步战斗结果（未收服的词不处理）
+  applyBattleResult(outcome.word.word, outcome.correct, gameId === 'ai-smart' ? 4 : 0)
 }
 
 /** 拼写题判分：忽略大小写与空格、连字符。 */

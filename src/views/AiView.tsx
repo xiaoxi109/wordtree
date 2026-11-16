@@ -74,6 +74,7 @@ export default function AiView({
   onToast,
   active = true,
   readerLessonId,
+  onOpenSpirits,
   onOpenReader,
   onSwitchReader,
   onBack,
@@ -89,6 +90,8 @@ export default function AiView({
   onToast: (msg: string, type?: 'success' | 'error' | 'info') => void
   active?: boolean
   readerLessonId: string | null
+  /** 打开 AI 词灵图鉴 */
+  onOpenSpirits: () => void
   onOpenReader: (lessonId: string) => void
   /** 列表连播切篇：替换栈顶，不增加返回栈深度 */
   onSwitchReader: (lessonId: string) => void
@@ -443,6 +446,18 @@ export default function AiView({
             {advice.source === 'local' && (
               <p className="mt-1.5 text-[10px] text-slate-400">配置大模型后，这里会给出更贴合你的建议</p>
             )}
+
+            {/* 词灵入口 */}
+            <button
+              onClick={onOpenSpirits}
+              className="mt-2.5 flex w-full items-center gap-2 rounded-[12px] border border-fuchsia-200/70 bg-white/80 px-3 py-2 text-left transition active:scale-[0.99] dark:border-fuchsia-500/25 dark:bg-white/[0.04]"
+            >
+              <SparklesIcon width={15} height={15} className="shrink-0 text-fuchsia-600 dark:text-fuchsia-300" />
+              <span className="min-w-0 flex-1 text-[12px] font-bold text-slate-700 dark:text-slate-200">
+                我的词灵图鉴 · AI 给每个词创造一只角色
+              </span>
+              <ChevronRightIcon width={15} height={15} className="shrink-0 text-slate-300" />
+            </button>
           </section>
         )}
 

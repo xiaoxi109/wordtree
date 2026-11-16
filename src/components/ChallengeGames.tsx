@@ -3,6 +3,7 @@ import { useSpeech } from '../hooks/useSpeech'
 import { useChallengeSession } from '../hooks/useChallengeSession'
 import { STAR_LABELS, shuffle, type ChallengeGameDef, type ChallengeQuestion, type ChallengeWord } from '../lib/challenge'
 import { generateAndCacheAiItems, poolSignature } from '../lib/aiQuiz'
+import { getBattleReport, generateBattleReport } from '../lib/battleReport'
 import { getNote, ensureNote } from '../lib/aiNotes'
 import { SpeakerBtn } from './word'
 import { CheckIcon, XIcon, SparklesIcon, RotateCcwIcon, StarIcon, HeadphonesIcon, ChevronRightIcon } from './icons'
@@ -32,6 +33,8 @@ export interface ChallengeProps {
   onNextLevel?: () => void
   /** 预生成的题目（AI 出题） */
   preset?: ChallengeQuestion[]
+  /** AI 剧情的当前章节 */
+  chapter?: { intro: string; rival: string; clear: string }
 }
 
 /* ───────────────────────── 共享外框 ───────────────────────── */
@@ -72,19 +75,46 @@ function ProgressBar({
 
 function ResultPanel({
   session,
+  def,
   level,
+  clearLine,
   onRestart,
   onExit,
   onNextLevel,
 }: {
   session: ReturnType<typeof useChallengeSession>
+  def: ChallengeGameDef
   level: number
+  clearLine?: string
   onRestart: () => void
   onExit: () => void
   onNextLevel?: () => void
 }) {
   const pct = Math.round((session.score / session.total) * 100)
   const mistakeNotes = session.mistakes.map((m) => ({ ...m, note: getNote(m.word) }))
+  const reportInput = {
+    game: def.title,
+    level,
+    score: session.score,
+    total: session.total,
+    stars: session.stars,
+    avgMs: session.avgMs,
+    bestStreak: session.bestStreak,
+    wrongWords: session.mistakes.map((m) => m.word),
+  }
+  const [report, setReport] = useState<string>(() => getBattleReport(reportInput) ?? '')
+
+  useEffect(() => {
+    let alive = true
+    void generateBattleReport(reportInput).then((r) => {
+      if (alive) setReport(r)
+    })
+    return () => {
+      alive = false
+    }
+    // reportInput 每次渲染都是新对象；只在结算时生成一次即可
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.finished])
 
   // 结算时给还没讲解的错词补一次生成（下次遇到就能直接显示）
   useEffect(() => {
@@ -118,6 +148,24 @@ function ResultPanel({
           第 {level + 1} 关 · 答对 {session.score} / {session.total} · {pct}%
         </p>
       </div>
+
+      {/* 剧情通关台词 */}
+      {clearLine && (
+        <p className="w-full max-w-[330px] rounded-[12px] border border-fuchsia-200/60 bg-white/70 px-3 py-2 text-center text-[12px] leading-relaxed text-fuchsia-700 dark:border-fuchsia-500/25 dark:bg-white/[0.04] dark:text-fuchsia-300">
+          {clearLine}
+        </p>
+      )}
+
+      {/* AI 战报 */}
+      {report && (
+        <div className="w-full max-w-[330px] rounded-[16px] border border-fuchsia-200/60 bg-fuchsia-50/70 p-3 text-left dark:border-fuchsia-500/25 dark:bg-fuchsia-500/10">
+          <p className="mb-1 flex items-center gap-1 text-[10px] font-bold text-fuchsia-600 dark:text-fuchsia-300">
+            <SparklesIcon width={12} height={12} />
+            AI 战报
+          </p>
+          <p className="text-[12px] leading-relaxed text-slate-700 dark:text-slate-200">{report}</p>
+        </div>
+      )}
 
       <div className="grid w-full grid-cols-3 gap-2">
         <div className="rounded-[14px] border border-slate-200/70 bg-white/70 py-2.5 dark:border-white/10 dark:bg-white/[0.04]">
@@ -185,7 +233,7 @@ function ResultPanel({
 
 /* ───────────────────────── 选择题玩法 ───────────────────────── */
 
-function ChoiceGame({ def, level, pool, onMaster, onExit, onNextLevel, preset }: ChallengeProps) {
+function ChoiceGame({ def, level, pool, onMaster, onExit, onNextLevel, preset, chapter }: ChallengeProps) {
   const session = useChallengeSession({ def, level, pool, onMaster, preset })
   const { speak } = useSpeech()
   const spokenFor = useRef<string | null>(null)
@@ -228,7 +276,9 @@ function ChoiceGame({ def, level, pool, onMaster, onExit, onNextLevel, preset }:
     return (
       <ResultPanel
         session={session}
+        def={def}
         level={level}
+        clearLine={chapter?.clear}
         onRestart={session.restart}
         onExit={onExit}
         onNextLevel={onNextLevel}
@@ -246,10 +296,25 @@ function ChoiceGame({ def, level, pool, onMaster, onExit, onNextLevel, preset }:
   }
 
   const isWord = def.optionKind === 'word'
-  const answerText = isWord ? q.target.word : q.target.meaning
+  const aiKind = q.kind
+  const isAiKind = !!aiKind && aiKind !== 'meaning'
+  // AI 题型考的是「选哪个英文词」，所以答案与选项用词形；听音辨词也是词形
+  const answerText = isWord || isAiKind ? q.target.word : q.target.meaning
+
+  const AI_KIND_LABEL: Record<string, string> = {
+    cloze: '选出填入空格的单词',
+    synonym: '选出意思最接近的词',
+    antonym: '选出意思相反的词',
+    root: '根据词根线索猜出单词',
+  }
 
   return (
     <div className="flex flex-1 flex-col">
+      {chapter?.rival && (
+        <p className="mb-2 truncate rounded-[10px] bg-fuchsia-50 px-2.5 py-1.5 text-[11px] font-semibold text-fuchsia-700 dark:bg-fuchsia-500/10 dark:text-fuchsia-300">
+          {chapter.rival}
+        </p>
+      )}
       <ProgressBar index={session.index} total={session.total} score={session.score} streak={session.streak} />
 
       <div className="flex flex-1 flex-col items-center justify-center">
@@ -264,6 +329,28 @@ function ChoiceGame({ def, level, pool, onMaster, onExit, onNextLevel, preset }:
                 <HeadphonesIcon width={28} height={28} />
               </button>
               <p className="mt-4 text-[11px] text-slate-400">听发音，选出正确的单词</p>
+            </>
+          ) : isAiKind ? (
+            <>
+              <span className="inline-flex rounded-full bg-fuchsia-100 px-2 py-0.5 text-[10px] font-bold text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300">
+                AI · {aiKind === 'cloze' ? '情境填空' : aiKind === 'synonym' ? '近义辨析' : aiKind === 'antonym' ? '反义对决' : '词根推理'}
+              </span>
+              {aiKind === 'cloze' || aiKind === 'root' ? (
+                <p className="mt-3 break-words text-[19px] font-semibold leading-relaxed text-slate-900 dark:text-slate-50">
+                  {q.promptText}
+                </p>
+              ) : (
+                <p className="mt-3 break-words font-display text-[36px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
+                  {q.target.word}
+                </p>
+              )}
+              {aiKind !== 'cloze' && q.target.ipa && (
+                <p className="mt-2 text-[13px] text-slate-400">{q.target.ipa}</p>
+              )}
+              <div className="mt-3 flex justify-center">
+                <SpeakerBtn text={q.target.word} iconSize={18} className="!h-9 !w-9" />
+              </div>
+              <p className="mt-3 text-[11px] text-slate-400">{AI_KIND_LABEL[aiKind ?? '']}</p>
             </>
           ) : (
             <>
@@ -326,7 +413,7 @@ function ChoiceGame({ def, level, pool, onMaster, onExit, onNextLevel, preset }:
 
 /* ───────────────────────── 拼写玩法 ───────────────────────── */
 
-function SpellGameInner({ def, level, pool, onMaster, onExit, onNextLevel }: ChallengeProps) {
+function SpellGameInner({ def, level, pool, onMaster, onExit, onNextLevel, chapter }: ChallengeProps) {
   const session = useChallengeSession({ def, level, pool, onMaster })
   const [text, setText] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -345,7 +432,9 @@ function SpellGameInner({ def, level, pool, onMaster, onExit, onNextLevel }: Cha
     return (
       <ResultPanel
         session={session}
+        def={def}
         level={level}
+        clearLine={chapter?.clear}
         onRestart={() => {
           setText('')
           session.restart()
@@ -367,6 +456,11 @@ function SpellGameInner({ def, level, pool, onMaster, onExit, onNextLevel }: Cha
 
   return (
     <div className="flex flex-1 flex-col">
+      {chapter?.rival && (
+        <p className="mb-2 truncate rounded-[10px] bg-fuchsia-50 px-2.5 py-1.5 text-[11px] font-semibold text-fuchsia-700 dark:bg-fuchsia-500/10 dark:text-fuchsia-300">
+          {chapter.rival}
+        </p>
+      )}
       <ProgressBar index={session.index} total={session.total} score={session.score} streak={session.streak} />
 
       <div className="flex flex-1 flex-col items-center justify-center">
@@ -450,11 +544,11 @@ export function AiSmartGame(props: ChallengeProps) {
   const [preset, setPreset] = useState<ChallengeQuestion[] | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [degraded, setDegraded] = useState(false)
-  const startedRef = useRef(false)
 
   useEffect(() => {
-    if (startedRef.current) return
-    startedRef.current = true
+    // 注意：不要用 ref 防止重复执行——StrictMode 的「挂载→卸载→重挂载」会让
+    // 第一次的异步结果被 alive=false 丢弃，第二次又被 ref 挡住，导致永远 loading。
+    // 依赖都是稳定的（pool 来自父组件 useMemo），交给 cleanup 处理即可。
 
     // 优先用薄弱词（错词本）与已掌握词
     const weak = pool.filter((w) => w.meaning)
@@ -469,12 +563,16 @@ export function AiSmartGame(props: ChallengeProps) {
     let alive = true
     void (async () => {
       try {
-        const items = await generateAndCacheAiItems({
+        // 最多等 8 秒：AI 慢就先用本地题开打，生成结果仍会在后台写入缓存供下次使用
+        const request = generateAndCacheAiItems({
           cacheKey,
           candidates,
           count: def.perLevel,
-          game: 'AI 智囊（看词选义）',
+          game: 'AI 智囊（多题型）',
         })
+        const timeout = new Promise<never[]>((resolve) => window.setTimeout(() => resolve([]), 8000))
+        const items = await Promise.race([request, timeout])
+        if (items.length === 0 && alive) setDegraded(true)
         if (!alive) return
         const byWord = new Map(pool.map((w) => [w.word.toLowerCase(), w]))
         const questions: ChallengeQuestion[] = []
@@ -485,10 +583,19 @@ export function AiSmartGame(props: ChallengeProps) {
             .map((d) => byWord.get(d.toLowerCase()))
             .filter((w): w is ChallengeWord => !!w && w.meaning !== target.meaning)
           if (ds.length < 3) continue
+          // cloze / synonym / antonym / root 考的是「选哪个英文词」，选项用词形；
+          // 经典 meaning 题选中文释义。
+          const answerText = item.kind && item.kind !== 'meaning' ? target.word : target.meaning
+          const options =
+            item.kind && item.kind !== 'meaning'
+              ? [answerText, ...ds.map((d) => d.word)]
+              : [answerText, ...ds.map((d) => d.meaning)]
           questions.push({
             target,
-            options: shuffle([target.meaning, ...ds.map((d) => d.meaning)]),
+            options: shuffle(options),
             note: item.note,
+            kind: item.kind,
+            promptText: item.promptText,
           })
         }
         if (questions.length === 0) {
@@ -522,7 +629,7 @@ export function AiSmartGame(props: ChallengeProps) {
     <div className="flex min-h-full flex-col">
       {degraded && (
         <p className="mb-2 rounded-[12px] bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
-          AI 出题不可用，已改用本地易混词出题
+          AI 出题有点慢，已先用本地易混词开打；生成好会缓存，下次进来就是 AI 题
         </p>
       )}
       <ChoiceGame {...props} preset={preset} />

@@ -18,17 +18,36 @@ export interface AiCandidate {
   pos?: string
 }
 
+/**
+ * AI 题型：不再只有「看词选义」，让模型根据关卡创作不同考法。
+ *  - meaning  看英文选中文释义（经典）
+ *  - cloze    中文情境句填空，选英文词（考用法）
+ *  - synonym  看词选最接近的近义词（考辨析）
+ *  - antonym  看词选反义词（考对立）
+ *  - root     给词根/词缀线索猜词（考构词）
+ */
+export type AiQuestionKind = 'meaning' | 'cloze' | 'synonym' | 'antonym' | 'root'
+
 /** 一道 AI 题的规划结果（词都在候选池内）。 */
 export interface AiItem {
   /** 目标词 */
   word: string
-  /** 3 个易混干扰词 */
+  /** 3 个干扰词 */
   distractors: string[]
   /** 一句话讲解（答错时展示） */
   note?: string
+  /** 题型 */
+  kind: AiQuestionKind
+  /** cloze 题的中文情境句（用 ____ 占位）；root 题的词根提示 */
+  promptText?: string
 }
 
 const QUIZ_KEY = 'lexicore-ai-quiz'
+
+/** 模型字段安全取字符串。 */
+function str(v: unknown, fallback = ''): string {
+  return typeof v === 'string' && v.trim() ? v.trim() : fallback
+}
 
 /** 候选池签名：同一个池子才复用同一批题。 */
 export function poolSignature(candidates: AiCandidate[]): string {
@@ -103,14 +122,19 @@ export async function generateAiItems(opts: {
       {
         role: 'system',
         content:
-          '你是英语出题助手。只输出一个 JSON 对象，不要解释、不要代码块围栏。\n' +
-          '格式：{"items":[{"word":"目标词","distractors":["易混词1","易混词2","易混词3"],"note":"一句话讲解"}]}\n' +
+          '你是英语闯关出题官，擅长把单词考出花样。只输出一个 JSON 对象，不要解释、不要代码块围栏。\n' +
+          '格式：{"items":[{"word":"目标词","kind":"meaning|cloze|synonym|antonym|root","promptText":"情境句或词根提示","distractors":["词1","词2","词3"],"note":"一句话讲解"}]}\n' +
           '硬性要求：\n' +
           '1. word 必须是候选表里的词；\n' +
-          '2. distractors 必须是候选表里另外 3 个不同的词，尽量与目标词易混（同词性、近义、用法相近）；\n' +
-          '3. 不得编造候选表之外的词；\n' +
-          '4. note 用中文一句话（不超过 30 字）说明这个词的含义或用法要点；\n' +
-          '5. items 数量按要求给出。',
+          '2. distractors 必须是候选表里另外 3 个不同的词，不得编造；\n' +
+          '3. 题型按题目顺序循环安排：meaning → cloze → synonym → antonym → root，每 5 题一轮；\n' +
+          '4. cloze 题：promptText 写一句中文日常情境句，用「____」占位（答案是 word）；distractors 选词性相同、能塞进句子但语义不对的词；\n' +
+          '5. synonym 题：distractors 选与目标词意思相近但不同的词；\n' +
+          '6. antonym 题：distractors 选与目标词相关但并非反义的词（要有一个真反义词作答案）；\n' +
+          '7. root 题：promptText 用中文拆解词根词缀给出线索（如「trans=横跨，port=港口」），不能直接说出词义；\n' +
+          '8. meaning 题：promptText 留空；\n' +
+          '9. note 用中文一句话（不超过 30 字）说明词义或易混点；\n' +
+          '10. items 数量按要求给出。',
       },
       {
         role: 'user',
@@ -148,9 +172,26 @@ export async function generateAiItems(opts: {
     }
     if (distractors.length < 3) continue
 
+    const kindRaw = str(o.kind, 'meaning')
+    const kind: AiQuestionKind =
+      kindRaw === 'cloze' || kindRaw === 'synonym' || kindRaw === 'antonym' || kindRaw === 'root'
+        ? kindRaw
+        : 'meaning'
+    const promptText = str(o.promptText, '').slice(0, 80)
+    // cloze / root 必须有提示文本才成立，否则降级为经典题型
     seen.add(key)
-    const note = typeof o.note === 'string' ? o.note.trim() : ''
-    out.push({ word: target, distractors, note: note || undefined })
+    if ((kind === 'cloze' || kind === 'root') && !promptText) {
+      out.push({ word: target, distractors, note: str(o.note, '') || undefined, kind: 'meaning' })
+    } else {
+      const note = str(o.note, '')
+      out.push({
+        word: target,
+        distractors,
+        note: note || undefined,
+        kind,
+        promptText: kind === 'meaning' ? undefined : promptText || undefined,
+      })
+    }
     if (out.length >= count) break
   }
   return out
