@@ -234,11 +234,9 @@ export function WordCard({
 /* ----------------------------- Detail body（整页展示） ----------------------------- */
 export function WordDetailBody({
   word,
-  mastered,
   onOpenWord,
 }: {
   word: Word
-  mastered: boolean
   /** 例句中点词回调，打开对应词的详情 */
   onOpenWord?: (w: Word) => void
 }) {
@@ -319,20 +317,12 @@ export function WordDetailBody({
         />
       </div>
 
-      {/* 徽标行：词性徽标已移除（释义区仍按词性分组展示），仅保留常用词 / 已掌握 */}
-      {(word.common || mastered) && (
+      {/* 徽标行：词性徽标已移除（释义区仍按词性分组展示），仅保留常用词 */}
+      {word.common && (
         <div className="no-scrollbar mt-3 flex min-w-0 items-center gap-1.5 overflow-x-auto">
-          {word.common && (
-            <span className="shrink-0 whitespace-nowrap rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
-              常用词
-            </span>
-          )}
-          {mastered && (
-            <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border border-brand-200/70 bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-700 dark:border-brand-500/25 dark:bg-brand-500/10 dark:text-brand-300">
-              <CheckIcon width={11} height={11} />
-              已掌握
-            </span>
-          )}
+          <span className="shrink-0 whitespace-nowrap rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
+            常用词
+          </span>
         </div>
       )}
 
@@ -507,7 +497,7 @@ export function WordModal({
         </button>
       }
     >
-      <WordDetailBody word={word} mastered={mastered} onOpenWord={onOpenWord} />
+      <WordDetailBody word={word} onOpenWord={onOpenWord} />
     </Sheet>
   )
 }

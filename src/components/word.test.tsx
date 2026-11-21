@@ -86,4 +86,15 @@ describe('词卡详情「已掌握 / 未掌握」二态切换', () => {
     mount(false, () => {}, () => {})
     expect(document.body.textContent).not.toContain('加入未掌握')
   })
+
+  it('详情正文不再显示「已掌握」徽标标签（底部操作按钮保留）', () => {
+    // mastered=true 时旧版会在释义上方渲染一个文本恰为「已掌握」的徽标 span
+    mount(true, () => {}, () => {})
+    const exactMasteredLabels = Array.from(document.querySelectorAll('span')).filter(
+      (el) => el.textContent?.trim() === '已掌握',
+    )
+    expect(exactMasteredLabels).toHaveLength(0)
+    // 底部切换按钮仍在（文案为「取消已掌握」，不等于徽标标签）
+    expect(findButton('取消已掌握')).toBeTruthy()
+  })
 })
