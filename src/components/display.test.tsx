@@ -59,6 +59,12 @@ describe('WordCard 显示语言', () => {
     expect(html).not.toContain('/ˈɔːdə(r)/')
   })
 
+  it('zh：中文释义只渲染一次，不在标题与下方重复', () => {
+    const html = renderCard('zh')
+    const occurrences = html.split('点菜；命令').length - 1
+    expect(occurrences).toBe(1)
+  })
+
   it('未传 mode 时等价于 both（向后兼容）', () => {
     expect(renderCard()).toBe(renderCard('both'))
   })

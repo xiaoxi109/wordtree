@@ -189,13 +189,9 @@ export function WordCard({
     >
       <div className="relative flex w-full items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          {showEn ? (
+          {showEn && (
             <span className="min-w-0 break-words font-display text-[18px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-slate-50">
               {word.word}
-            </span>
-          ) : (
-            <span className="min-w-0 break-words text-base font-bold leading-snug text-slate-900 dark:text-slate-50">
-              {word.meaning}
             </span>
           )}
         </div>
