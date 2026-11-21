@@ -55,6 +55,16 @@ export const CAT_DOT: Record<CategoryId, string> = {
   weather: 'bg-sky-600',
 }
 
+/**
+ * 喇叭播放态只显示在「最近点击的那一个」上。
+ * useSpeech 的 speaking 是模块级全局状态，词表里每张卡片的喇叭都会订阅它；
+ * 若直接用它驱动 animate-pulse（透明度呼吸 = 变暗再变亮），点一个喇叭会让
+ * 所有卡片的喇叭一起呼吸。这里改用实例级 active + 令牌：谁被点击谁 claim，
+ * 广播时其他实例立即熄灭自己的播放态，播放结束只熄灭仍持有最新令牌的那个。
+ */
+let speakerTokenSeq = 0
+const speakerTokenSubscribers = new Set<(token: number) => void>()
+
 export function SpeakerBtn({
   text,
   className = '',
@@ -66,7 +76,20 @@ export function SpeakerBtn({
   rate?: number
   iconSize?: number
 }) {
-  const { speak, speaking, loading, preload, downloadStatus } = useSpeech()
+  const { speak, loading, preload, downloadStatus } = useSpeech()
+  const [active, setActive] = useState(false)
+  const tokenRef = useRef(0)
+
+  useEffect(() => {
+    const subscriber = (token: number) => {
+      if (token !== tokenRef.current) setActive(false)
+    }
+    speakerTokenSubscribers.add(subscriber)
+    return () => {
+      speakerTokenSubscribers.delete(subscriber)
+    }
+  }, [])
+
   return (
     <button
       type="button"
@@ -80,12 +103,18 @@ export function SpeakerBtn({
             /* ignore */
           }
         }
-        speak(text, rate)
+        const token = ++speakerTokenSeq
+        tokenRef.current = token
+        speakerTokenSubscribers.forEach((fn) => fn(token))
+        setActive(true)
+        speak(text, rate, () => {
+          if (tokenRef.current === token) setActive(false)
+        })
       }}
       title={loading ? '正在加载语音模型…' : '发音'}
       aria-label="朗读"
       className={`inline-flex items-center justify-center rounded-full p-2 text-brand-700 transition hover:bg-brand-50 hover:text-brand-800 active:scale-95 dark:text-brand-300 dark:hover:bg-brand-500/10 ${
-        speaking || loading ? 'animate-pulse' : ''
+        active ? 'animate-pulse' : ''
       } ${className}`}
     >
       <SpeakerIcon width={iconSize} height={iconSize} />
