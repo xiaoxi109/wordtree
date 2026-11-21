@@ -317,15 +317,6 @@ export function WordDetailBody({
         />
       </div>
 
-      {/* 徽标行：词性徽标已移除（释义区仍按词性分组展示），仅保留常用词 */}
-      {word.common && (
-        <div className="no-scrollbar mt-3 flex min-w-0 items-center gap-1.5 overflow-x-auto">
-          <span className="shrink-0 whitespace-nowrap rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
-            常用词
-          </span>
-        </div>
-      )}
-
       {/* 释义：按词性分组两列展示。词性列宽 auto 自适应本词最长标签：
           短标签（n.）不再留一大截空白，长标签（modal v.）也不会被 34px 挤换行；
           同一卡片内各行释义左缘仍保持对齐 */}
@@ -450,6 +441,7 @@ export function WordModal({
   mastered,
   onClose,
   onPop,
+  onBack,
   onToggleMastered,
   onOpenWord,
 }: {
@@ -458,6 +450,8 @@ export function WordModal({
   onClose: () => void
   /** 卡片栈回退按钮：传了说明栈里至少有两张，可以返回上一个词 */
   onPop?: () => void
+  /** 安卓系统返回键处理：有上一词时回退一词，否则关闭弹层。默认等同 onClose。 */
+  onBack?: () => void
   onToggleMastered: () => void
   /** 例句中点词打开新的 WordModal；不传则禁用点词交互 */
   onOpenWord?: (w: Word) => void
@@ -467,6 +461,7 @@ export function WordModal({
     <Sheet
       open
       onClose={onClose}
+      onBack={onBack ?? onClose}
       title=""
       headerLeading={
         onPop && (

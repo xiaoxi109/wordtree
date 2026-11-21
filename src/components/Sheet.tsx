@@ -58,6 +58,7 @@ function unlockAppScroll(): void {
 export function Sheet({
   open,
   onClose,
+  onBack,
   title,
   subtitle,
   children,
@@ -69,6 +70,8 @@ export function Sheet({
 }: {
   open: boolean
   onClose: () => void
+  /** 安卓系统返回键的专用处理：传了则优先走它，X / 遮罩 / ESC / 下拉仍走 onClose 关闭 */
+  onBack?: () => void
   title?: ReactNode
   subtitle?: ReactNode
   children: ReactNode
@@ -84,6 +87,8 @@ export function Sheet({
   const active = useContext(PageActiveContext)
   const closeRef = useRef(onClose)
   closeRef.current = onClose
+  const backRef = useRef(onBack)
+  backRef.current = onBack
 
   /**
    * 头部没有任何内容时（如词卡详情：正文里已有大号词形，不再重复标题），
@@ -121,8 +126,12 @@ export function Sheet({
     window.addEventListener('keydown', onKey)
     lockAppScroll()
 
-    // 安卓系统返回键优先关闭弹层
-    const unregister = registerBack(() => requestClose())
+    // 安卓系统返回键：有专用返回处理（如词卡栈「返回上一词」）先走它，否则关闭弹层。
+    // 走 ref 取最新回调，避免 onBack 变化时反复注册/注销。
+    const unregister = registerBack(() => {
+      if (backRef.current) backRef.current()
+      else requestClose()
+    })
 
     return () => {
       window.removeEventListener('keydown', onKey)

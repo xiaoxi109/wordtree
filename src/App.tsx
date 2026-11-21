@@ -650,6 +650,7 @@ export default function App() {
           mastered={topModalMastered}
           onClose={closeWordModal}
           onPop={wordModalStack.length > 1 ? popWordModal : undefined}
+          onBack={wordModalStack.length > 1 ? popWordModal : closeWordModal}
           onToggleMastered={() => toggleMasteredFromModal(topModalEntry.word, topModalEntry.lexiconId)}
           onOpenWord={(w) => openWord(w, topModalEntry.lexiconId)}
         />
