@@ -4,12 +4,8 @@ import { TOPICS, buildMasteredPool, sceneLabelText } from '../lib/cluster'
 import { loadAiPrefs, saveAiPrefs } from '../lib/aiPrefs'
 import {
   LESSON_FORMATS,
-  difficultyOptions,
   difficultyText,
-  recommendedOptionId,
-  resolveDifficulty,
   formatMeta,
-  type Difficulty,
   type LessonFormatChoice,
 } from '../lib/prompt'
 import { useAiLessons } from '../hooks/useAiLessons'
@@ -99,8 +95,6 @@ export default function AiView({
     setTopicState(id)
     saveAiPrefs({ topic: id })
   }, [])
-  // 难度选择保存 CEFR 选项 id，生成时再解析成内部难度
-  const [difficultyId, setDifficultyId] = useState<string>('adaptive')
   const [format, setFormatState] = useState<LessonFormatChoice>(() => loadAiPrefs().format)
   const setFormat = useCallback((f: LessonFormatChoice) => {
     setFormatState(f)
@@ -125,13 +119,6 @@ export default function AiView({
     null,
     lexiconLevel ?? null,
   )
-  // 难度选项统一使用 CEFR 档位；推荐锚点来自当前词库
-  const difficultyChoices = useMemo(() => difficultyOptions(), [])
-  const selectedDifficulty = resolveDifficulty(difficultyId)
-  const recOptionId = recommendedOptionId(recommended.difficulty)
-  // 用户是否手动覆盖了系统推荐难度（词数跟随 planner 动态推荐，无覆盖）
-  const userOverrode = selectedDifficulty !== 'adaptive' && selectedDifficulty !== recommended.difficulty
-
   const refreshLessons = useCallback(async () => {
     try {
       setLessons(await listLessons())
@@ -198,11 +185,6 @@ export default function AiView({
     [lessons, generating, progress.lessonId],
   )
 
-  // 只有「当前词库 / 掌握情况」会改变推荐难度；切换学习模式不影响难度，因此不在依赖里
-  useEffect(() => {
-    if (!userOverrode) setDifficultyId(recOptionId)
-  }, [recOptionId, userOverrode])
-
   const startGenerate = async () => {
     if (generating) return
     if (!configReady) {
@@ -210,16 +192,13 @@ export default function AiView({
       return
     }
     try {
-      // 词数完全交给 planner 的动态推荐；这里只可能覆盖用户手动选的难度。
-      const overrides: { difficulty?: Difficulty } = {}
-      if (userOverrode) overrides.difficulty = selectedDifficulty
-
+      // 难度完全交给 planner 按「当前词库 / 掌握情况」自动推导，不提供手动分级入口。
       const lesson = await generate(
         masteredSet,
         cfg,
-        { topic, difficulty: selectedDifficulty === 'adaptive' ? recommended.difficulty : selectedDifficulty, format },
+        { topic, difficulty: recommended.difficulty, format },
         mode,
-        overrides.difficulty !== undefined ? overrides : undefined,
+        undefined,
         undefined,
         null,
         lexiconLevel ?? null,
@@ -350,8 +329,7 @@ export default function AiView({
 
   const modeMeta = MODE_LABEL[mode]
   const topicLabel = TOPICS.find((t) => t.id === topic)?.label ?? '随机'
-  const difficultyLabel = difficultyText(difficultyId)
-  const recommendedDifficultyLabel = difficultyText(recOptionId)
+  const recommendedDifficultyLabel = difficultyText(recommended.difficulty)
 
   return (
     // 固定头 + 内部独立滚动：标题/生成卡不在任何滚动容器里，物理上不会位移
@@ -437,7 +415,7 @@ export default function AiView({
           className="mt-2 flex w-full items-center gap-2 rounded-[10px] bg-slate-900/[0.04] px-3 py-1.5 text-left transition hover:bg-slate-900/[0.07] active:scale-[0.995] dark:bg-white/[0.06] dark:hover:bg-white/10"
         >
           <span className="min-w-0 flex-1 truncate text-[11px] text-slate-500 dark:text-slate-400">
-            自定义：{modeMeta.label} · 难度 {difficultyLabel} · {topicLabel}
+            自定义：{modeMeta.label} · {topicLabel}
           </span>
           <ChevronRightIcon width={14} height={14} className="shrink-0 text-slate-300" />
         </button>
@@ -562,42 +540,6 @@ export default function AiView({
                 )
               })}
             </div>
-          </div>
-
-          {/* 句式难度：难度锚点由当前词库推断，不再有分级入口 */}
-          <div>
-            <div className="mb-1.5 flex items-baseline justify-between">
-              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
-                句式难度
-              </p>
-              <p className="text-[10px] font-semibold text-brand-600 dark:text-brand-300">
-                系统推荐 {recommendedDifficultyLabel}
-                {userOverrode && ' · 已自定义'}
-              </p>
-            </div>
-            {lexiconLevel && (
-              <p className="mb-1.5 text-[10px] text-slate-400 dark:text-slate-500">
-                当前词库推断 {lexiconLevel} · 可在设置中切换词库
-              </p>
-            )}
-            <div className="no-scrollbar flex flex-wrap gap-1.5">
-              {difficultyChoices.map((d) => {
-                const rec = d.id === recOptionId
-                return (
-                  <button
-                    key={d.id}
-                    onClick={() => setDifficultyId(d.id)}
-                    className={`chip-on ${difficultyId === d.id ? '' : 'chip-off'} ${rec ? 'ring-1 ring-brand-400/60' : ''}`}
-                  >
-                    {d.label}
-                    {rec && <span className="ml-0.5 text-[9px] text-brand-500">✦</span>}
-                  </button>
-                )
-              })}
-            </div>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
-              选「自适应」让模型贴合你的实际水平；选具体等级会强制难度向上/向下对齐。
-            </p>
           </div>
 
           <OptionGroup
