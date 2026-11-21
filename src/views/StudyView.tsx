@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyStudyGrade,
   buildStudySession,
@@ -8,6 +8,7 @@ import {
   type StudyCard,
 } from '../lib/study'
 import { posShort } from '../lib/pos'
+import { meaningGroups } from '../lib/meaningGroups'
 import { SpeakerBtn } from '../components/word'
 import { DisplayModeToggle, useDisplayMode } from '../components/display'
 import { useSpeech } from '../hooks/useSpeech'
@@ -204,6 +205,8 @@ function WordStudyDeck({
   const isZh = displayMode === 'zh'
   const isEn = displayMode === 'en'
   const isBoth = displayMode === 'both'
+  /** 中文释义按词性分组展示，避免整段长释义堆在一起（与词卡详情一致） */
+  const meaning = useMemo(() => meaningGroups(card.meaning), [card.meaning])
 
   return (
     // 自己算高度：避开顶部 fixed 返回栏 + flex-col 三段式，顶/底固定、中间滚动
@@ -265,11 +268,22 @@ function WordStudyDeck({
           {/* 卡头：标题 inline 徽章 + 发音 + 眼睛 toggle */}
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1">
-              {/* zh 模式：正面中文释义 */}
-              {isZh && card.meaning && (
-                <p className="break-words font-display text-[24px] font-semibold leading-tight text-slate-900 dark:text-slate-50">
-                  {card.meaning}
-                </p>
+              {/* zh 模式：正面中文释义（按词性分组，避免整段堆叠） */}
+              {isZh && meaning.length > 0 && (
+                <div className="mt-0.5 space-y-1">
+                  {meaning.map((g, i) => (
+                    <div key={i} className="flex items-baseline gap-2">
+                      {g.pos && (
+                        <span className="shrink-0 text-[12px] font-bold text-brand-600 dark:text-brand-300">
+                          {g.pos}
+                        </span>
+                      )}
+                      <span className="text-[18px] font-semibold leading-snug text-slate-900 dark:text-slate-50">
+                        {g.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
               )}
               {/* en / both 模式：正面英文词形 */}
               {(isEn || isBoth) && (
@@ -278,12 +292,13 @@ function WordStudyDeck({
                 </p>
               )}
 
-              {/* 音标 → 分类标签 → 发音，同一行 */}
+              {/* 音标 → 分类标签 → 发音，同一行。中文模式正面不显示音标与发音喇叭
+                  （答案在展开区呈现，避免音标/喇叭重复、也避免提前泄露英文发音） */}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {card.ipa && (
+                {!isZh && card.ipa && (
                   <span className="text-[13px] text-slate-400">{card.ipa}</span>
                 )}
-                {card.pos && (
+                {!isZh && card.pos && (
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500 dark:bg-white/[0.08] dark:text-slate-300">
                     {posShort({ pos: card.pos, meaning: card.meaning })}
                   </span>
@@ -293,12 +308,14 @@ function WordStudyDeck({
                     常用词
                   </span>
                 )}
-                <SpeakerBtn
-                  text={card.word}
-                  rate={0.85}
-                  iconSize={18}
-                  className="!h-8 !w-8 !bg-brand-50 !p-0 dark:!bg-brand-500/10"
-                />
+                {!isZh && (
+                  <SpeakerBtn
+                    text={card.word}
+                    rate={0.85}
+                    iconSize={18}
+                    className="!h-8 !w-8 !bg-brand-50 !p-0 dark:!bg-brand-500/10"
+                  />
+                )}
               </div>
 
               {/* both 模式：正面就显示中文释义 */}
