@@ -181,6 +181,10 @@ function WordStudyDeck({
   const done = exhausted || (session?.length ?? 0) === 0
   const card = session?.[index]
 
+  /** 中文释义按词性分组展示，避免整段长释义堆在一起（与词卡详情一致）。
+   *  必须在所有 early return 之前调用，保证各渲染路径 hooks 数量一致。 */
+  const meaning = useMemo(() => meaningGroups(card?.meaning ?? ''), [card?.meaning])
+
   // session 为 null 表示牌堆还在加载，不能当成「本轮完成」渲染。
   if (!session) {
     return (
@@ -205,8 +209,6 @@ function WordStudyDeck({
   const isZh = displayMode === 'zh'
   const isEn = displayMode === 'en'
   const isBoth = displayMode === 'both'
-  /** 中文释义按词性分组展示，避免整段长释义堆在一起（与词卡详情一致） */
-  const meaning = useMemo(() => meaningGroups(card.meaning), [card.meaning])
 
   return (
     // 自己算高度：避开顶部 fixed 返回栏 + flex-col 三段式，顶/底固定、中间滚动
