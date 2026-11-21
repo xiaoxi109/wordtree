@@ -3,64 +3,60 @@ import { Capacitor } from '@capacitor/core'
 import { StatusBar, Style } from '@capacitor/status-bar'
 import { App as CapApp } from '@capacitor/app'
 import { runBack } from './lib/back'
-import { LEVELS, ALL_WORDS } from './data'
 import { ensureExtraLoaded } from './data/lexicon'
-import type { Level, Word } from './data'
-import { GRADES, type GradeId } from './data/grades'
 import {
-  DEFAULT_GRADE,
-  DEFAULT_LEVEL,
-  activeLevels,
-  activeGrades,
-  gradeToLevel,
-  type Route,
-  type GradeRung,
-  type LevelRung,
-} from './data/levels'
+  LEXICONS,
+  getLexiconMeta,
+  inferLexiconLevel,
+  isLexiconId,
+  loadMastered,
+  masteredKey,
+} from './data/lexicons'
+import { loadDictWords } from './data/dictLoader'
+import { BOOK_CATALOG } from './data/generated/book-catalog'
+import type { Word } from './data'
+import type { LexiconId } from './data/types'
 import { useSpeech } from './hooks/useSpeech'
 import HomeDashboard from './views/HomeDashboard'
 import BrowseView from './views/BrowseView'
-import GradeView from './views/GradeView'
-import SettingsView, { LlmSettingsView, RungPickerView } from './views/SettingsView'
+import LexiconPickerView from './views/LexiconPickerView'
+import SettingsView, { LlmSettingsView } from './views/SettingsView'
 import StudyView from './views/StudyView'
 import SentenceView from './views/SentenceView'
+import PhoneticsView from './views/PhoneticsView'
 import AiView from './views/AiView'
-import ChallengesView from './views/ChallengesView'
-import SpiritView from './views/SpiritView'
-import PhonicsView from './views/PhonicsView'
 import { WordModal } from './components/word'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { AdvancementQuiz } from './components/AdvancementQuiz'
-import { checkAdvancement } from './lib/advancement'
 import { pushReviewWord, removeReviewWord } from './lib/review'
-import { lookupWord, type DictEntry } from './lib/dict'
+import { MASTERED_EVENT, setWordMastered } from './lib/bookProgress'
 import { wordKey } from './lib/cluster'
+import {
+  THEME_STORAGE_KEY,
+  getSystemTheme,
+  isThemePreference,
+  type ResolvedTheme,
+  type ThemePreference,
+} from './lib/theme'
 
 import { ArrowLeftIcon, HomeIcon, SparklesIcon, UserIcon, CheckIcon, XIcon } from './components/icons'
 import { PageActiveContext } from './components/Sheet'
 
 type View = 'home' | 'ai' | 'me'
-type Theme = 'light' | 'dark'
 
 /**
  * 全局页面栈只承载全屏沉浸式二级页：
- * 大模型设置、我的等级、等级词表、年级词表、AI 课程阅读、闯关晋级、
- * 词库（BrowseView，浏览与查词共用同一入口）、复习（StudyView）。
- * 生成条件 / 课程集操作等轻量交互用底部 Sheet / ActionSheet，不进栈。
+ * 大模型设置、AI 课程阅读、词库（BrowseView，浏览与查词共用同一入口）、复习（StudyView）。
+ * 词库选择统一在设置的「词库管理」完成，不再有分级页面。
  */
 type Page =
   | { kind: 'llm' }
-  | { kind: 'rung' }
-  | { kind: 'level'; level: Level }
-  | { kind: 'grade'; grade: GradeId }
+  | { kind: 'lexicons' }
   | { kind: 'browse-all' }
   | { kind: 'study' }
   | { kind: 'sentences' }
+  | { kind: 'phonetics' }
   | { kind: 'ai-reader'; lessonId: string }
-  | { kind: 'quiz' }
-  | { kind: 'challenge' }
-  | { kind: 'spirit' }
-  | { kind: 'phonics' }
+  | { kind: 'book-lesson'; bookId: string }
 
 /**
  * AI 课程在 Web 与原生端都开放；Web 端能否请求成功取决于接口是否允许跨域，
@@ -105,30 +101,39 @@ function ToastContainer({ toasts, bottomOffset = '24px' }: { toasts: Toast[]; bo
 
 /* ----------------------------- App ----------------------------- */
 export default function App() {
-  const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('lexicore-theme')
-    if (saved) return saved as Theme
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  /** 用户外观偏好：跟随系统 / 浅色 / 深色，默认跟随系统。 */
+  const [themePref, setThemePref] = useState<ThemePreference>(() => {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY)
+    return isThemePreference(saved) ? saved : 'system'
   })
-  const [route, setRoute] = useState<Route>(() => {
-    // 旧版/损坏的 localStorage 可能写入任意字符串，直接强转会让 activeLevels 得到空窗口。
-    return localStorage.getItem('lexicore-route') === 'grade' ? 'grade' : 'level'
+  /** 系统外观偏好：仅在 pref === 'system' 时参与生效主题，变化需实时响应。 */
+  const [systemTheme, setSystemTheme] = useState<ResolvedTheme>(() => getSystemTheme())
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
+    if (!mq) return
+    const onChange = (e: MediaQueryListEvent) => setSystemTheme(e.matches ? 'dark' : 'light')
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  /** 实际生效的浅 / 深主题。 */
+  const theme: ResolvedTheme = themePref === 'system' ? systemTheme : themePref
+  /** 当前词库：core 沿用旧 key；其余词库进度按 id 独立保存。 */
+  const [lexiconId, setLexiconIdState] = useState<LexiconId>(() => {
+    const saved = localStorage.getItem('lexicore-lexicon')
+    return isLexiconId(saved) ? saved : 'core'
   })
-  const [currentRung, setCurrentRung] = useState<GradeRung | LevelRung>(() => {
-    const saved = localStorage.getItem('lexicore-rung')
-    if (saved) return saved as GradeRung | LevelRung
-    return route === 'grade' ? DEFAULT_GRADE : DEFAULT_LEVEL
-  })
-  const [masteredArr, setMasteredArr] = useState<string[]>(() => {
-    try {
-      const parsed: unknown = JSON.parse(localStorage.getItem('lexicore-mastered') || '[]')
-      // 损坏数据（例如 '{}'）会让 new Set(masteredArr) 抛错直接白屏。
-      if (!Array.isArray(parsed)) return []
-      return parsed.filter((w): w is string => typeof w === 'string')
-    } catch {
-      return []
-    }
-  })
+  const [masteredMap, setMasteredMap] = useState<Record<LexiconId, string[]>>(() =>
+    Object.fromEntries(LEXICONS.map((l) => [l.id, loadMastered(l.id)])) as Record<LexiconId, string[]>,
+  )
+  const masteredArr = masteredMap[lexiconId]
+  const [dictWords, setDictWords] = useState<Word[]>([])
+  /** core 传 undefined， BrowseView 继续用 ALL_WORDS（含懒加载词典层）。 */
+  const activePool = lexiconId === 'core' ? undefined : dictWords
+  const allMasteredCount = useMemo(
+    () => Object.values(masteredMap).reduce((n, arr) => n + arr.length, 0),
+    [masteredMap],
+  )
+  const lexiconLevel = useMemo(() => inferLexiconLevel(lexiconId), [lexiconId])
   const [toasts, setToasts] = useState<Toast[]>([])
   const [view, setView] = useState<View>('home')
 
@@ -178,7 +183,7 @@ export default function App() {
     return () => window.clearTimeout(id)
   }, [])
 
-  // 首次进入首页、闯关成功、完成一轮复习 → 都算"今日学习"
+  // 首次进入首页、完成一轮复习 → 都算"今日学习"
   useEffect(() => {
     recordStudyDay()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -197,10 +202,14 @@ export default function App() {
   /** 每进一层页面记录当时的滚动位置，返回时恢复 */
   const pageScrollRef = useRef<number[]>([])
 
-  /** 单词详情走弹层（不跳页）：点哪张卡就弹哪个词，关掉仍停在原列表位置 */
-  const [wordModalStack, setWordModalStack] = useState<Word[]>([])
+  /**
+   * 单词详情走弹层（不跳页）：点哪张卡就弹哪个词，关掉仍停在原列表位置。
+   * lexiconId 为可选的词表覆盖：书籍课程内查词时传入配套词表 id，
+   * 弹层里的「加入已掌握」写回该配套词表，而不是当前全局选中的词表。
+   */
+  const [wordModalStack, setWordModalStack] = useState<{ word: Word; lexiconId?: string }[]>([])
   const openWord = useCallback(
-    (w: Word) => setWordModalStack((prev) => [...prev, w]),
+    (w: Word, lexiconId?: string) => setWordModalStack((prev) => [...prev, { word: w, lexiconId }]),
     [],
   )
   const popWordModal = useCallback(() => {
@@ -237,7 +246,12 @@ export default function App() {
     const top = pages[pages.length - 1]
     return top?.kind === 'ai-reader' ? top.lessonId : null
   }, [pages])
-  const aiPageOpen = aiReaderLessonId !== null
+  /** 书籍课程的书页同样走页面栈：栈顶是它时由 AiView 渲染书页（底部导航隐藏）。 */
+  const bookLessonBookId = useMemo<string | null>(() => {
+    const top = pages[pages.length - 1]
+    return top?.kind === 'book-lesson' ? top.bookId : null
+  }, [pages])
+  const aiPageOpen = aiReaderLessonId !== null || bookLessonBookId !== null
 
   const switchView = useCallback((next: View) => {
     if (next === viewRef.current) return
@@ -252,13 +266,14 @@ export default function App() {
   }, [])
 
   const masteredSet = useMemo(() => new Set(masteredArr), [masteredArr])
-  /** 闯关用：已掌握的词补全成词条（释义 / 音标） */
-  const masteredWords = useMemo(
-    () => masteredArr.map((w) => lookupWord(w)).filter((w): w is DictEntry => !!w),
-    [masteredArr],
-  )
-  const toggleTheme = useCallback(() => setTheme((t) => (t === 'dark' ? 'light' : 'dark')), [])
 
+  /** 栈顶词条：带配套词表覆盖时，掌握状态从该词表的存储里读 */
+  const topModalEntry = wordModalStack[wordModalStack.length - 1]
+  const topModalMastered = topModalEntry
+    ? topModalEntry.lexiconId
+      ? (masteredMap[topModalEntry.lexiconId] ?? []).includes(topModalEntry.word.word)
+      : masteredSet.has(topModalEntry.word.word)
+    : false
   // App 启动即预加载 Piper 模型（不播放）。模型尽早就绪，可使后续用户手势内的
   // 朗读同步播放，避免首次 await 加载模型后 audio.play() 失去手势被 Android WebView 拦截。
   const { preload } = useSpeech()
@@ -271,40 +286,68 @@ export default function App() {
   }, [preload])
 
   const toggleMastered = useCallback((word: string) => {
-    setMasteredArr((prev) => {
-      const isAdd = !prev.includes(word)
+    setMasteredMap((prev) => {
+      const arr = prev[lexiconId] ?? []
+      const isAdd = !arr.includes(word)
       if (isAdd) recordStudyDay() // 标记掌握 → 今日学习
-      return isAdd ? [...prev, word] : prev.filter((w) => w !== word)
+      const next = isAdd ? [...arr, word] : arr.filter((w) => w !== word)
+      return { ...prev, [lexiconId]: next }
     })
-  }, [recordStudyDay])
+  }, [lexiconId, recordStudyDay])
 
   /**
    * 查词弹层的二态切换：加入已掌握时移出复习队列；取消已掌握时按「未掌握」记入复习队列，
    * 后续 AI 课程会重点复现。等价于原先的「加入已掌握 / 加入未掌握」两个按钮。
+   * overrideLexiconId 存在时（书籍课程内查词）：掌握状态写回该册配套词表，不触碰复习队列。
    */
-  const toggleMasteredFromModal = useCallback((w: Word) => {
+  const toggleMasteredFromModal = useCallback((w: Word, overrideLexiconId?: string) => {
+    if (overrideLexiconId) {
+      const list = masteredMap[overrideLexiconId] ?? []
+      setWordMastered(overrideLexiconId, w.word, !list.includes(w.word))
+      return
+    }
     const willBeMastered = !masteredSet.has(w.word)
     toggleMastered(w.word)
     if (willBeMastered) removeReviewWord(wordKey(w.word))
     else pushReviewWord({ key: wordKey(w.word), word: w.word, ipa: w.ipa, meaning: w.meaning }, 'unknown')
-  }, [masteredSet, toggleMastered])
+  }, [masteredMap, masteredSet, toggleMastered])
+
+  /**
+   * 书籍课程里标记的掌握词直接写在对应词表的存储里：
+   * 这里监听事件同步内存状态，保证词库页 / 复习页立刻看到最新进度。
+   */
+  useEffect(() => {
+    const onMastered = (e: Event) => {
+      const detail = (e as CustomEvent<{ lexiconId?: string }>).detail
+      const id = detail?.lexiconId
+      if (!id) return
+      setMasteredMap((prev) => ({ ...prev, [id]: loadMastered(id) }))
+      recordStudyDay()
+    }
+    window.addEventListener(MASTERED_EVENT, onMastered)
+    return () => window.removeEventListener(MASTERED_EVENT, onMastered)
+  }, [recordStudyDay])
 
   /** 批量增删掌握词（复习判级回流 / 导入进度）。 */
   const applyMastered = useCallback((words: string[], mode: 'add' | 'remove') => {
-    setMasteredArr((prev) => {
-      const next = new Set(prev)
+    setMasteredMap((prev) => {
+      const arr = prev[lexiconId] ?? []
+      const next = new Set(arr)
       for (const w of words) {
         if (mode === 'add') next.add(w)
         else next.delete(w)
       }
-      if (next.size === prev.length) return prev
-      return Array.from(next)
+      if (next.size === arr.length) return prev
+      return { ...prev, [lexiconId]: Array.from(next) }
     })
-  }, [])
+  }, [lexiconId])
 
   const importMastered = useCallback((words: string[]) => {
-    setMasteredArr((prev) => Array.from(new Set([...prev, ...words])))
-  }, [])
+    setMasteredMap((prev) => ({
+      ...prev,
+      [lexiconId]: Array.from(new Set([...(prev[lexiconId] ?? []), ...words])),
+    }))
+  }, [lexiconId])
 
   const pushToast = useCallback((msg: string, type: Toast['type'] = 'success') => {
     const id = ++toastId
@@ -312,86 +355,58 @@ export default function App() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 2600)
   }, [])
 
+  /** 切换词库：先从内置 JSON 装载词表，成功后再切换，避免空白页。 */
+  const selectLexicon = useCallback(async (id: LexiconId) => {
+    if (id === lexiconId) return
+    try {
+      if (id !== 'core') await loadDictWords(id)
+      setLexiconIdState(id)
+      pushToast(`已切换到 ${getLexiconMeta(id)?.name ?? id}`)
+    } catch {
+      pushToast('词库加载失败，请重试', 'error')
+    }
+  }, [lexiconId, pushToast])
+
+  // 启动时若上次选的是外部词库，先把它装进内存
+  useEffect(() => {
+    if (lexiconId === 'core') {
+      setDictWords([])
+      return
+    }
+    let alive = true
+    loadDictWords(lexiconId)
+      .then((words) => { if (alive) setDictWords(words) })
+      .catch(() => { if (alive) pushToast('词库加载失败，可到设置里重新选择', 'error') })
+    return () => { alive = false }
+  }, [lexiconId, pushToast])
+
+  /** 持久化用户偏好（含 system），与 index.html 内联初始化读取同一 key。 */
+  useEffect(() => {
+    localStorage.setItem(THEME_STORAGE_KEY, themePref)
+  }, [themePref])
+
   useEffect(() => {
     const dark = theme === 'dark'
     document.documentElement.classList.toggle('dark', dark)
     // 与 index.html 的内联初始化同步，避免系统深色 + 应用浅色时原生控件混色。
     document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
-    localStorage.setItem('lexicore-theme', theme)
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#121a15' : '#f6f3ea')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', dark ? '#0d1117' : '#f6f3ea')
 
     // Android 状态栏跟随应用内主题：深色→浅色图标，浅色→深色图标。
     // 失败时静默忽略（Web 端 / 旧系统不支持）。
     if (Capacitor.isNativePlatform()) {
       StatusBar.setStyle({ style: dark ? Style.Dark : Style.Light }).catch(() => {})
-      StatusBar.setBackgroundColor({ color: dark ? '#121a15' : '#f6f3ea' }).catch(() => {})
+      StatusBar.setBackgroundColor({ color: dark ? '#0d1117' : '#f6f3ea' }).catch(() => {})
     }
   }, [theme])
 
   useEffect(() => {
-    localStorage.setItem('lexicore-mastered', JSON.stringify(masteredArr))
-  }, [masteredArr])
+    localStorage.setItem(masteredKey(lexiconId), JSON.stringify(masteredArr))
+  }, [lexiconId, masteredArr])
 
   useEffect(() => {
-    localStorage.setItem('lexicore-route', route)
-  }, [route])
-
-  useEffect(() => {
-    localStorage.setItem('lexicore-rung', currentRung)
-  }, [currentRung])
-
-  /**
-   * 激活窗口（软默认筛选 B）：
-   *   - 用户选了路线 + 我的等级后，词表默认只显示当前等级及以下的词
-   *   - 等级作为"软默认筛选"，不切碎场景分组（BrowseView 自己按 category 分组）
-   *   - 用户可以一键放宽到「全部」（BrowseView 的 levelFilter = 'all'）
-   *   - 注：activeLevelsList 过滤掉 C1/C2（词库上限 B2）
-   */
-  const activeLevelsList = useMemo(
-    () => activeLevels(route, currentRung).filter((l) => l !== 'C1' && l !== 'C2') as Level[],
-    [route, currentRung],
-  )
-
-  // 当前激活窗口内的词（闯关游戏的可练习词池）。
-  const activeWords = useMemo(() => {
-    const grades = activeGrades(route, currentRung)
-    return ALL_WORDS.filter((w) => {
-      // 闯关游戏只用课程词表，避免出现词典里的生僻词
-      if (w.tier === 'extra') return false
-      if (route === 'level') return activeLevelsList.includes(w.level)
-      return !!(w.grade && grades.includes(w.grade))
-    })
-  }, [route, activeLevelsList, currentRung])
-
-  /** 晋级检测：课程词表达到掌握门槛（低等级 100%，大等级按比例 + 上限）且有下一级可去 */
-  const advancement = useMemo(
-    () => checkAdvancement(route, currentRung, new Set(masteredArr)),
-    [route, currentRung, masteredArr],
-  )
-
-  /** AiView 用的目标 CEFR 等级：晋级目标 → 否则取激活窗口最高等级 */
-  const aiTargetLevel = useMemo<Level | null>(() => {
-    if (!advancement.nextRung) {
-      // 没下一级 → 取当前激活窗口最高等级
-      const highest = activeLevelsList[activeLevelsList.length - 1]
-      return highest ?? null
-    }
-    // grade 路线 → 映射
-    const levelRung = route === 'grade'
-      ? gradeToLevel(advancement.nextRung as any)
-      : advancement.nextRung
-    if (!levelRung || levelRung === 'C1' || levelRung === 'C2') return null
-    return levelRung as Level
-  }, [advancement.nextRung, route, activeLevelsList])
-
-  /** 设置里「我的等级」对应的 CEFR 等级（C1/C2 超出词库上限，按 B2 计） */
-  const myAiLevel = useMemo<Level | null>(() => {
-    const l = route === 'grade'
-      ? gradeToLevel(currentRung as GradeRung)
-      : (currentRung as LevelRung)
-    if (!l) return null
-    return l === 'C2' ? 'B2' : l
-  }, [route, currentRung])
+    localStorage.setItem('lexicore-lexicon', lexiconId)
+  }, [lexiconId])
 
   // 安卓系统返回键：先交给弹层 / 阅读器，再逐层退页面栈，然后回首页，最后退出应用
   useEffect(() => {
@@ -426,64 +441,56 @@ export default function App() {
     switch (page.kind) {
       case 'llm':
         return { title: '大模型设置', sub: '' }
-      case 'rung':
-        return { title: '我的等级', sub: '' }
-      case 'level': {
-        const l = LEVELS.find((x) => x.id === page.level)!
-        return { title: `西式 ${l.label}`, sub: l.desc }
-      }
-      case 'grade': {
-        const g = GRADES.find((x) => x.id === page.grade)!
-        return { title: g.label, sub: g.desc }
-      }
+      case 'lexicons':
+        return { title: '词库管理', sub: '选择当前使用的词库 · 进度独立保存' }
       case 'browse-all':
-        return { title: '词库', sub: '背词 · 查词 · 按场景分组与筛选' }
+        return {
+          title: getLexiconMeta(lexiconId)?.name ?? '词库',
+          sub: lexiconId === 'core' ? '背词 · 查词 · 按场景分组与筛选' : '背词 · 查词 · 已掌握 / 未掌握独立统计',
+        }
       case 'study':
         return { title: '复习', sub: '只练已掌握的词 · 到期即练' }
       case 'sentences':
         return { title: '短句', sub: '按使用场景分类 · 中文想，英文说' }
+      case 'phonetics':
+        return { title: '音标', sub: '48 音标 · 点击听发音 · 离线可用' }
       case 'ai-reader':
         return { title: '课程阅读', sub: '' }
-      case 'quiz':
-        return { title: '晋级闯关', sub: '抽检当前级单词 · 通过可晋级' }
-      case 'challenge':
-        return { title: '闯关', sub: '' }
-      case 'spirit':
-        return { title: '我的词灵', sub: 'AI 设定 · 真实战绩养成' }
-      case 'phonics':
-        return { title: '自然拼读 · 音标', sub: '音标表 · 拼读规则 · 听辨练习' }
+      case 'book-lesson':
+        return {
+          title: BOOK_CATALOG.find((b) => b.id === page.bookId)?.name ?? '书籍课程',
+          sub: '',
+        }
     }
-  }, [pages])
+  }, [pages, lexiconId])
 
   const renderPage = (page: Page) => {
     switch (page.kind) {
       case 'llm':
         return <LlmSettingsView onToast={pushToast} />
-      case 'rung':
+      case 'lexicons':
         return (
-          <RungPickerView
-            route={route}
-            currentRung={currentRung}
-            setCurrentRung={setCurrentRung}
+          <LexiconPickerView
+            lexiconId={lexiconId}
+            onSelect={selectLexicon}
             onDone={popPage}
           />
         )
       case 'browse-all':
         return (
           <BrowseView
-            route={route}
+            key={lexiconId}
+            pool={activePool}
             masteredSet={masteredSet}
             onOpen={openWord}
             onToggleMastered={(w) => toggleMastered(w.word)}
-            activeLevels={activeLevelsList}
-            defaultFilter="active"
-            currentRung={currentRung}
           />
         )
       case 'study':
         return (
           <StudyView
-            route={route}
+            key={lexiconId}
+            pool={activePool}
             masteredSet={masteredSet}
             onApplyMark={applyMastered}
             active={pages[pages.length - 1]?.kind === 'study'}
@@ -491,69 +498,14 @@ export default function App() {
         )
       case 'sentences':
         return <SentenceView active={pages[pages.length - 1]?.kind === 'sentences'} />
-      case 'level':
-        return (
-          <BrowseView
-            route={route}
-            level={page.level}
-            masteredSet={masteredSet}
-            onOpen={openWord}
-            onToggleMastered={(w) => toggleMastered(w.word)}
-            activeLevels={activeLevelsList}
-          />
-        )
-      case 'grade':
-        return (
-          <GradeView
-            grade={page.grade}
-            masteredSet={masteredSet}
-            onOpen={openWord}
-            onToggleMastered={(w) => toggleMastered(w.word)}
-          />
-        )
+      case 'phonetics':
+        return <PhoneticsView active={pages[pages.length - 1]?.kind === 'phonetics'} />
       // AI 阅读全屏页由 AiView 内部按 setId 渲染，这里只登记页面层级
       case 'ai-reader':
         return null
-      case 'quiz':
-        return (
-          <AdvancementQuiz
-            route={route}
-            currentRung={currentRung}
-            masteredSet={new Set(masteredArr)}
-            onComplete={(passed, nextRung) => {
-              // 只上报晋级结果。结果页必须留在屏幕上，由用户点「完成」后经 onCancel 返回，
-              // 否则这里 popPage 会在 setPhase('result') 生效前把组件卸载。
-              if (passed && nextRung) {
-                setCurrentRung(nextRung)
-                pushToast(`🎉 晋级到 ${nextRung}`, 'success')
-              } else if (!passed) {
-                pushToast('闯关未通过，继续加油 💪', 'info')
-              }
-            }}
-            onCancel={popPage}
-          />
-        )
-      case 'challenge':
-        return (
-          <ChallengesView
-            activeWords={activeWords}
-            masteredWords={masteredWords}
-            onMaster={(w) => {
-              // 闯关答对 → 标记为已掌握（已在掌握列表里的不动）
-              if (!masteredSet.has(w.word)) toggleMastered(w.word)
-            }}
-          />
-        )
-      case 'spirit':
-        return (
-          <SpiritView
-            masteredWords={masteredWords}
-            activeWords={activeWords}
-            onStudy={() => pushPage({ kind: 'study' })}
-          />
-        )
-      case 'phonics':
-        return <PhonicsView active={pages[pages.length - 1]?.kind === 'phonics'} />
+      // 书籍课程书页同样由 AiView 内部渲染
+      case 'book-lesson':
+        return null
     }
   }
 
@@ -569,7 +521,8 @@ export default function App() {
         } ${
           pages[pages.length - 1]?.kind === 'study'
             ? 'pb-[env(safe-area-inset-bottom)]'
-            : pages[pages.length - 1]?.kind === 'ai-reader'
+            : pages[pages.length - 1]?.kind === 'ai-reader' ||
+                pages[pages.length - 1]?.kind === 'book-lesson'
               ? 'pb-0'
               : 'pb-[calc(env(safe-area-inset-bottom)+78px)]'
         }`}
@@ -603,19 +556,16 @@ export default function App() {
           <div className={view === 'home' ? '' : 'hidden'} aria-hidden={view !== 'home'}>
             {visited.has('home') && (
               <HomeDashboard
+                key={lexiconId}
+                pool={activePool}
+                lexiconName={getLexiconMeta(lexiconId)?.name ?? '词库'}
+                totalMastered={allMasteredCount}
                 masteredSet={masteredSet}
                 masteredArr={masteredArr}
-                route={route}
-                currentRung={currentRung}
-                activeLevels={activeLevelsList}
-                canAdvance={advancement.canAdvance}
-                advanceAvailable={!!advancement.nextRung}
                 onOpenBrowse={() => pushPage({ kind: 'browse-all' })}
                 onOpenSentences={() => pushPage({ kind: 'sentences' })}
                 onOpenStudy={() => pushPage({ kind: 'study' })}
-                onStartQuiz={() => pushPage({ kind: 'quiz' })}
-                onOpenChallenges={() => pushPage({ kind: 'challenge' })}
-                onOpenPhonics={() => pushPage({ kind: 'phonics' })}
+                onOpenPhonetics={() => pushPage({ kind: 'phonetics' })}
                 streak={streak}
               />
             )}
@@ -631,15 +581,12 @@ export default function App() {
                 onToast={pushToast}
                 active={view === 'ai'}
                 readerLessonId={aiReaderLessonId}
-                onOpenSpirits={() => pushPage({ kind: 'spirit' })}
                 onOpenReader={(lessonId) => pushPage({ kind: 'ai-reader', lessonId })}
                 onSwitchReader={(lessonId) => replaceTopPage({ kind: 'ai-reader', lessonId })}
+                bookLessonBookId={bookLessonBookId}
+                onOpenBookLesson={(bookId) => pushPage({ kind: 'book-lesson', bookId })}
                 onBack={popPage}
-                activeLevels={activeLevelsList}
-                targetLevel={aiTargetLevel}
-                myLevel={myAiLevel}
-                route={route}
-                currentRung={currentRung}
+                lexiconLevel={lexiconLevel}
               />
             )}
           </div>
@@ -649,18 +596,16 @@ export default function App() {
           <div className={view === 'me' ? '' : 'hidden'} aria-hidden={view !== 'me'}>
             {visited.has('me') && (
               <SettingsView
-                theme={theme}
+                themePref={themePref}
                 aiEnabled={AI_ENABLED}
                 masteredCount={masteredArr.length}
-                onToggleTheme={toggleTheme}
+                lexiconId={lexiconId}
+                currentLexiconName={getLexiconMeta(lexiconId)?.name ?? '词库'}
+                onOpenLexicons={() => pushPage({ kind: 'lexicons' })}
+                onThemeChange={setThemePref}
                 onOpenLlm={() => pushPage({ kind: 'llm' })}
-                onOpenRung={() => pushPage({ kind: 'rung' })}
                 onToast={pushToast}
                 onImport={importMastered}
-                route={route}
-                setRoute={setRoute}
-                currentRung={currentRung}
-                setCurrentRung={setCurrentRung}
               />
             )}
           </div>
@@ -699,14 +644,14 @@ export default function App() {
         </nav>
       )}
 
-      {wordModalStack.length > 0 && (
+      {topModalEntry && (
         <WordModal
-          word={wordModalStack[wordModalStack.length - 1]}
-          mastered={masteredSet.has(wordModalStack[wordModalStack.length - 1].word)}
+          word={topModalEntry.word}
+          mastered={topModalMastered}
           onClose={closeWordModal}
           onPop={wordModalStack.length > 1 ? popWordModal : undefined}
-          onToggleMastered={() => toggleMasteredFromModal(wordModalStack[wordModalStack.length - 1])}
-          onOpenWord={(w) => openWord(w)}
+          onToggleMastered={() => toggleMasteredFromModal(topModalEntry.word, topModalEntry.lexiconId)}
+          onOpenWord={(w) => openWord(w, topModalEntry.lexiconId)}
         />
       )}
 

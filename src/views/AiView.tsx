@@ -4,7 +4,6 @@ import { TOPICS, buildMasteredPool, sceneLabelText } from '../lib/cluster'
 import { loadAiPrefs, saveAiPrefs } from '../lib/aiPrefs'
 import {
   LESSON_FORMATS,
-  difficultyForRung,
   difficultyOptions,
   difficultyText,
   recommendedOptionId,
@@ -19,17 +18,12 @@ import { getReviewWords } from '../lib/review'
 import { stripMarkup } from '../lib/parse'
 import { usePlayback, type PlayMode } from '../lib/playback'
 import { MODE_LABEL, type LearningMode, type GeneratedPlan } from '../lib/planner'
-import {
-  cacheAdvice,
-  collectDailyStats,
-  generateDailyAdvice,
-  getCachedAdvice,
-  type DailyAdvice,
-} from '../lib/dailyPlan'
 import type { Level, Word } from '../data'
-import { GRADE_RUNGS, LEVEL_RUNGS, type GradeRung, type LevelRung, type Route } from '../data/levels'
 import LessonReader from './LessonReader'
+import BookListView from './BookListView'
+import BookLessonView from './BookLessonView'
 import { Sheet } from '../components/Sheet'
+import Segmented from '../components/Segmented'
 import {
   BookOpenIcon,
   ChevronRightIcon,
@@ -38,7 +32,6 @@ import {
   SpinnerIcon,
   TrashIcon,
   XIcon,
-  RotateCcwIcon,
 } from '../components/icons'
 
 /** 生成中轮换的进度文案：LLM 耗时不可预估，用状态说明代替假的百分比 */
@@ -74,36 +67,29 @@ export default function AiView({
   onToast,
   active = true,
   readerLessonId,
-  onOpenSpirits,
   onOpenReader,
   onSwitchReader,
+  bookLessonBookId,
+  onOpenBookLesson,
   onBack,
-  activeLevels,
-  targetLevel,
-  myLevel,
-  route = 'level',
-  currentRung,
+  lexiconLevel,
 }: {
   masteredSet: Set<string>
-  /** 文章点词 → 打开全局统一的查词弹层 */
-  onOpenWord: (w: Word) => void
+  /** 文章点词 → 打开全局统一的查词弹层；书籍书页可传配套词表 id 覆盖掌握写入目标 */
+  onOpenWord: (w: Word, lexiconId?: string) => void
   onToast: (msg: string, type?: 'success' | 'error' | 'info') => void
   active?: boolean
   readerLessonId: string | null
-  /** 打开 AI 词灵图鉴 */
-  onOpenSpirits: () => void
   onOpenReader: (lessonId: string) => void
   /** 列表连播切篇：替换栈顶，不增加返回栈深度 */
   onSwitchReader: (lessonId: string) => void
+  /** 当前打开的书页（null 表示停在书架）；书页走页面栈，底部导航会隐藏 */
+  bookLessonBookId: string | null
+  /** 打开某一册书（压入页面栈） */
+  onOpenBookLesson: (bookId: string) => void
   onBack: () => void
-  activeLevels?: Level[]
-  targetLevel?: Level | null
-  /** 设置里「我的等级」对应的 CEFR 等级（推荐难度的锚点） */
-  myLevel?: Level | null
-  /** 设置里的学习路线：决定句式难度按西式等级还是中式年级显示 */
-  route?: Route
-  /** 设置里的「我的等级」 */
-  currentRung?: GradeRung | LevelRung
+  /** 当前词库推断出的 CEFR 档位，仅作为推荐难度锚点，不再提供分级入口。 */
+  lexiconLevel?: Level
 }) {
   const [lessons, setLessons] = useState<Lesson[] | null>(null)
   const [mode, setMode] = useState<LearningMode>('daily')
@@ -113,7 +99,7 @@ export default function AiView({
     setTopicState(id)
     saveAiPrefs({ topic: id })
   }, [])
-  // 难度选择保存「选项 id」（中式路线=年级 id，西式=CEFR 档位 id），生成时再解析成内部难度
+  // 难度选择保存 CEFR 选项 id，生成时再解析成内部难度
   const [difficultyId, setDifficultyId] = useState<string>('adaptive')
   const [format, setFormatState] = useState<LessonFormatChoice>(() => loadAiPrefs().format)
   const setFormat = useCallback((f: LessonFormatChoice) => {
@@ -123,46 +109,11 @@ export default function AiView({
   const [cfg, setCfg] = useState<LlmConfig>(loadLlmConfig())
   const [, setReviewCount] = useState(() => getReviewWords().length)
 
-  // ============ 今日学习计划（本地统计 + 可选的模型建议） ============
-  const [advice, setAdvice] = useState<DailyAdvice | null>(() => getCachedAdvice() ?? null)
-  const [planLoading, setPlanLoading] = useState(false)
-
-  const loadDailyPlan = useCallback(
-    async (force: boolean) => {
-      setPlanLoading(true)
-      try {
-        const stats = await collectDailyStats()
-        if (!force) {
-          const cached = getCachedAdvice()
-          if (cached) {
-            setAdvice(cached)
-            return
-          }
-        }
-        const next = await generateDailyAdvice(stats)
-        cacheAdvice(next)
-        setAdvice(next)
-      } catch {
-        /* 计划生成失败不影响主流程 */
-      } finally {
-        setPlanLoading(false)
-      }
-    },
-    [],
-  )
-
-  // 进入页面时：有缓存直接用，没有则生成一次
-  useEffect(() => {
-    if (!active) return
-    if (getCachedAdvice()) {
-      setAdvice(getCachedAdvice() ?? null)
-      return
-    }
-    void loadDailyPlan(false)
-  }, [active, loadDailyPlan])
-
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Lesson | null>(null)
+
+  // ============ 课程区两个并列标签：AI 定制课程 / 书籍课程 ============
+  const [pane, setPane] = useState<'ai' | 'books'>('ai')
 
   const { progress, generate, resume, cancel, previewPlan } = useAiLessons()
 
@@ -170,15 +121,14 @@ export default function AiView({
   const recommended: GeneratedPlan = previewPlan(
     masteredSet,
     mode,
-    activeLevels,
-    targetLevel ?? null,
-    myLevel ?? null,
+    undefined,
+    null,
+    lexiconLevel ?? null,
   )
-  // 难度选项跟随设置里的阶梯模式：西式=CEFR 档位，中式=每个年级一档
-  const difficultyChoices = useMemo(() => difficultyOptions(route), [route])
-  // 当前选中项解析出的内部难度；推荐项对应的选项 id
-  const selectedDifficulty = resolveDifficulty(route, difficultyId)
-  const recOptionId = recommendedOptionId(route, recommended.difficulty, currentRung)
+  // 难度选项统一使用 CEFR 档位；推荐锚点来自当前词库
+  const difficultyChoices = useMemo(() => difficultyOptions(), [])
+  const selectedDifficulty = resolveDifficulty(difficultyId)
+  const recOptionId = recommendedOptionId(recommended.difficulty)
   // 用户是否手动覆盖了系统推荐难度（词数跟随 planner 动态推荐，无覆盖）
   const userOverrode = selectedDifficulty !== 'adaptive' && selectedDifficulty !== recommended.difficulty
 
@@ -248,7 +198,7 @@ export default function AiView({
     [lessons, generating, progress.lessonId],
   )
 
-  // 只有「我的等级 / 掌握情况」会改变推荐难度；切换学习模式不影响难度，因此不在依赖里
+  // 只有「当前词库 / 掌握情况」会改变推荐难度；切换学习模式不影响难度，因此不在依赖里
   useEffect(() => {
     if (!userOverrode) setDifficultyId(recOptionId)
   }, [recOptionId, userOverrode])
@@ -270,9 +220,9 @@ export default function AiView({
         { topic, difficulty: selectedDifficulty === 'adaptive' ? recommended.difficulty : selectedDifficulty, format },
         mode,
         overrides.difficulty !== undefined ? overrides : undefined,
-        activeLevels,
-        targetLevel ?? null,
-        myLevel ?? null,
+        undefined,
+        null,
+        lexiconLevel ?? null,
       )
       setLessons((prev) => (prev ? [lesson, ...prev] : [lesson]))
       onToast('开始写作中…', 'success')
@@ -383,84 +333,58 @@ export default function AiView({
     )
   }
 
+  /* ------------------------------ 书页 ------------------------------ */
+  if (bookLessonBookId) {
+    return (
+      <BookLessonView
+        key={bookLessonBookId}
+        bookId={bookLessonBookId}
+        onBack={onBack}
+        onOpenWord={onOpenWord}
+        onToast={onToast}
+      />
+    )
+  }
+
   /* ------------------------------ 列表页 ------------------------------ */
 
   const modeMeta = MODE_LABEL[mode]
   const topicLabel = TOPICS.find((t) => t.id === topic)?.label ?? '随机'
-  const difficultyLabel = difficultyText(route, difficultyId)
-  const recommendedDifficultyLabel = difficultyText(route, recOptionId)
-  const rungMetaLabel = route === 'grade'
-    ? GRADE_RUNGS.find((g) => g.id === currentRung)?.label
-    : LEVEL_RUNGS.find((l) => l.id === currentRung)?.label
-  const myRungLabel = currentRung ? (rungMetaLabel ?? String(currentRung)) : null
-  const myDifficulty = currentRung ? difficultyForRung(route, currentRung) : null
+  const difficultyLabel = difficultyText(difficultyId)
+  const recommendedDifficultyLabel = difficultyText(recOptionId)
 
   return (
     // 固定头 + 内部独立滚动：标题/生成卡不在任何滚动容器里，物理上不会位移
     // 可用高度 = 100dvh - main顶 padding(safe+16) - main底 padding(safe+78 底导航)
     <div className="flex h-[calc(100dvh_-_env(safe-area-inset-top)_-_16px_-_env(safe-area-inset-bottom)_-_78px)] flex-col overflow-hidden">
-      {/* 固定头：标题 + 今日计划 + 生成卡 */}
+      {/* 课程区两个并列标签 */}
       <div className="shrink-0 pb-2">
-        {/* 今日学习计划 */}
-        {advice && (
-          <section className="mb-2 rounded-[18px] border border-fuchsia-200/60 bg-gradient-to-br from-fuchsia-50 via-white to-white p-3.5 shadow-sm dark:border-fuchsia-500/25 dark:from-fuchsia-500/10 dark:via-slate-800/40 dark:to-slate-800/40">
-            <div className="flex items-center gap-2">
-              <SparklesIcon width={14} height={14} className="shrink-0 text-fuchsia-600 dark:text-fuchsia-300" />
-              <p className="min-w-0 flex-1 text-[13px] font-bold leading-snug text-slate-800 dark:text-slate-100 line-clamp-2">
-                {advice.headline}
-              </p>
-              <span className="shrink-0 rounded-full bg-slate-900/[0.05] px-2 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-400">
-                约 {advice.minutes} 分钟
-              </span>
-              <button
-                onClick={() => void loadDailyPlan(true)}
-                disabled={planLoading}
-                aria-label="重新生成今日计划"
-                className="shrink-0 rounded-[10px] p-1 text-slate-400 transition active:scale-95 disabled:opacity-40"
-              >
-                <RotateCcwIcon width={14} height={14} />
-              </button>
-            </div>
-            <ul className="mt-2 space-y-1">
-              {advice.actions.map((a) => (
-                <li key={a.label} className="flex items-baseline gap-2 text-[12px] leading-relaxed">
-                  <span className="shrink-0 rounded-[8px] bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-bold text-fuchsia-700 dark:bg-fuchsia-500/15 dark:text-fuchsia-300">
-                    {a.label}
-                  </span>
-                  <span className="min-w-0 flex-1 text-slate-500 dark:text-slate-400">{a.detail}</span>
-                </li>
-              ))}
-            </ul>
-            {advice.focusWords.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {advice.focusWords.map((w) => (
-                  <span
-                    key={w}
-                    className="rounded-full border border-slate-900/[0.06] px-2 py-0.5 font-display text-[11px] font-semibold text-slate-600 dark:border-white/10 dark:text-slate-300"
-                  >
-                    {w}
-                  </span>
-                ))}
-              </div>
-            )}
-            {advice.source === 'local' && (
-              <p className="mt-1.5 text-[10px] text-slate-400">配置大模型后，这里会给出更贴合你的建议</p>
-            )}
+        <Segmented
+          value={pane}
+          onChange={setPane}
+          options={[
+            { value: 'ai', label: 'AI 课程', icon: <SparklesIcon width={13} height={13} /> },
+            { value: 'books', label: '书籍课程', icon: <BookOpenIcon width={13} height={13} /> },
+          ]}
+        />
+      </div>
 
-            {/* 词灵入口 */}
-            <button
-              onClick={onOpenSpirits}
-              className="mt-2.5 flex w-full items-center gap-2 rounded-[12px] border border-fuchsia-200/70 bg-white/80 px-3 py-2 text-left transition active:scale-[0.99] dark:border-fuchsia-500/25 dark:bg-white/[0.04]"
-            >
-              <SparklesIcon width={15} height={15} className="shrink-0 text-fuchsia-600 dark:text-fuchsia-300" />
-              <span className="min-w-0 flex-1 text-[12px] font-bold text-slate-700 dark:text-slate-200">
-                我的词灵图鉴 · AI 给每个词创造一只角色
-              </span>
-              <ChevronRightIcon width={15} height={15} className="shrink-0 text-slate-300" />
-            </button>
-          </section>
-        )}
-
+      {pane === 'books' ? (
+        <>
+          <div className="mb-2 flex items-end gap-2">
+            <h2 className="font-display text-[18px] font-semibold tracking-tight text-slate-900 dark:text-slate-50">
+              书籍课程
+            </h2>
+            <span className="truncate text-[11px] text-slate-400">新概念英语 1-4 · 离线课文与原声</span>
+          </div>
+          <BookListView
+            onOpenBook={(bookId) => onOpenBookLesson(bookId)}
+          />
+        </>
+      ) : (
+      <>
+      {/* 固定头：标题 + 生成卡 */}
+      <div className="shrink-0 pb-2">
         <div className="mb-2 flex items-end gap-2">
           <h2 className="font-display text-[18px] font-semibold tracking-tight text-slate-900 dark:text-slate-50">
             AI 定制课程
@@ -587,6 +511,8 @@ export default function AiView({
         </div>
       )}
       </div>
+      </>
+      )}
 
       {/* ----------------------------- 底部 Sheet ----------------------------- */}
 
@@ -619,7 +545,7 @@ export default function AiView({
                     onClick={() => setMode(m)}
                     className={`flex flex-col items-start rounded-[14px] border p-3 text-left transition duration-200 active:scale-[0.98] ${
                       active
-                        ? 'border-brand-400 bg-brand-50 dark:border-brand-500 dark:bg-brand-500/15'
+                        ? 'border-brand-400 bg-brand-50 dark:border-brand-400/40 dark:bg-brand-500/10'
                         : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/50'
                     }`}
                   >
@@ -638,7 +564,7 @@ export default function AiView({
             </div>
           </div>
 
-          {/* 句式难度（等级按设置里的阶梯模式显示，标注推荐值与我的等级） */}
+          {/* 句式难度：难度锚点由当前词库推断，不再有分级入口 */}
           <div>
             <div className="mb-1.5 flex items-baseline justify-between">
               <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400">
@@ -649,9 +575,9 @@ export default function AiView({
                 {userOverrode && ' · 已自定义'}
               </p>
             </div>
-            {myRungLabel && (
+            {lexiconLevel && (
               <p className="mb-1.5 text-[10px] text-slate-400 dark:text-slate-500">
-                当前：{route === 'grade' ? '中式阶梯' : '西式阶梯'} · 我的等级 {myRungLabel}
+                当前词库推断 {lexiconLevel} · 可在设置中切换词库
               </p>
             )}
             <div className="no-scrollbar flex flex-wrap gap-1.5">
@@ -665,17 +591,12 @@ export default function AiView({
                   >
                     {d.label}
                     {rec && <span className="ml-0.5 text-[9px] text-brand-500">✦</span>}
-                    {myDifficulty !== null && d.difficulty === myDifficulty && !rec && (
-                      <span className="ml-0.5 text-[9px] text-slate-400 dark:text-slate-500">· 我的等级</span>
-                    )}
                   </button>
                 )
               })}
             </div>
             <p className="mt-1.5 text-[11px] leading-relaxed text-slate-400">
-              {route === 'grade'
-                ? '按中式阶梯显示年级，与设置里的「我的等级」同一体系；选「自适应」让模型贴合你的实际水平。'
-                : '选「自适应」让模型贴合你的实际水平；选具体等级会强制难度向上/向下对齐。'}
+              选「自适应」让模型贴合你的实际水平；选具体等级会强制难度向上/向下对齐。
             </p>
           </div>
 
@@ -765,7 +686,7 @@ function LessonCard({
       }}
       className="flex cursor-pointer items-start gap-2.5 rounded-[16px] border border-slate-200/60 bg-white/65 p-3 transition duration-200 hover:border-brand-300/50 hover:bg-white hover:shadow-soft active:scale-[0.995] dark:border-slate-700/50 dark:bg-slate-800/45 dark:hover:border-brand-500/30"
     >
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-brand-600 text-white">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-brand-600 text-white dark:border dark:border-brand-400/50 dark:bg-brand-500/15 dark:text-brand-200">
         <BookOpenIcon width={18} height={18} />
       </div>
 

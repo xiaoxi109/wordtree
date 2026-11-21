@@ -25,7 +25,7 @@ for (const m of text.matchAll(/^\s*\[("(?:[^"\\]|\\.)*"),\s*("(?:[^"\\]|\\.)*"),
 const counts = new Map<string, number>()
 const unknown: Row[] = []
 for (const r of rows) {
-  const c = guessScene(r.meaning, r.pos)
+  const c = guessScene(r.meaning, r.pos, r.word)
   if (!c) {
     unknown.push(r)
     counts.set('（兜底 thinking）', (counts.get('（兜底 thinking）') ?? 0) + 1)

@@ -294,7 +294,7 @@ function SentenceRow({
         onKeyDown={(e) => e.stopPropagation()}
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition ${
           mastered
-            ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
+            ? 'border-brand-600 bg-brand-600 text-white shadow-sm dark:border-brand-400/50 dark:bg-brand-500/25 dark:text-brand-200'
             : 'border-slate-300/70 bg-white/40 text-transparent hover:border-brand-400 hover:text-brand-400 dark:border-slate-600 dark:bg-slate-900/30'
         }`}
       >

@@ -1,6 +1,6 @@
 export type Level = 'Pre-A1' | 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
 
-/** 中式阶梯 rung 顺序（由低到高）—— 从 levels.ts 重导出，保持 Word.grade 类型稳定 */
+/** 年级档位（内部兼容字段，不再作为用户可选学习路线） */
 export type GradeRung =
   | 'primary'   // 小学
   | 'g7'        // 初一
@@ -44,6 +44,15 @@ export type CategoryId =
   | 'questions'   // 疑问词
   | 'toys'        // 玩具与游戏
   | 'idioms'      // 常用短语与口语表达
+  | 'sports'      // 运动与健身
+  | 'music'       // 音乐与乐器
+  | 'tech'        // 科技与数码
+  | 'city'        // 城市与建筑
+  | 'festival'    // 节日与庆祝
+  | 'law'         // 法律与制度
+  | 'military'    // 战争与军事
+  | 'religion'    // 宗教与信仰
+  | 'weather'     // 天气与气候
 
 export interface CategoryMeta {
   id: CategoryId
@@ -57,6 +66,22 @@ export interface Example {
   zh: string
 }
 
+/** 短语搭配：英文短语 + 中文释义（来自 TypeWords 词库的 phrases）。 */
+export interface WordPhrase {
+  en: string
+  zh: string
+}
+
+/** 近义词：词性 + 该词性下的中文释义 + 近义词列表（来自 TypeWords 词库的 synos）。 */
+export interface WordSynonym {
+  pos: string
+  meaning: string
+  words: string[]
+}
+
+/** 词库标识：core 为默认词树词库；其余为 TypeWords 词库目录中的 enName。 */
+export type LexiconId = string
+
 export interface Word {
   word: string
   level: Level
@@ -64,6 +89,10 @@ export interface Word {
   pos: string
   meaning: string
   examples: Example[]
+  /** 短语搭配（富字典补齐后才有）。 */
+  phrases?: WordPhrase[]
+  /** 近义词（富字典补齐后才有）。 */
+  synonyms?: WordSynonym[]
   /** Scene category (assigned from categories.ts); used for grouped display. */
   category?: CategoryId
   /** High-frequency / everyday word — shown as 常用. */
@@ -80,8 +109,10 @@ export interface Word {
   /** Marked true for words that exist in the 人教版 (PEP) grade list but are NOT
    *  in the main word library — their 音标/释义 come from PEP data (no examples / category). */
   pepOnly?: boolean
-  /** 中式阶梯 rung（primary / g7 / g8 / g9 / g10 / g11 / g12 / cet4 / cet6 / kaoyan），每个词必须同时有 grade 和 level。 */
+  /** 年级档位（内部兼容字段，不参与 UI 筛选），每个词同时保留 grade 和 level。 */
   grade?: GradeRung
+  /** 所属词库；缺省视为 core。 */
+  lexiconId?: LexiconId
 }
 
 export interface LevelMeta {

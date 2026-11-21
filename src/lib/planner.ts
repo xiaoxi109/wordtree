@@ -43,7 +43,7 @@ export interface LearnerProfile {
   levelDistribution: Record<string, number>
   averageLevel: Level | null
   targetLevel: Level | null
-  /** 设置里「我的等级」对应的 CEFR 等级（声明的当前水平，推荐的锚点） */
+  /** 当前词库推断出的 CEFR 等级（推荐难度的锚点） */
   currentLevel: Level | null
   categoryDistribution: Record<string, number>
   weakCategories: CategoryId[]
@@ -147,7 +147,7 @@ function computeAverageLevel(dist: Record<string, number>): Level | null {
 /**
  * 全场景推荐 + 模式覆盖 → 最终生成计划。
  *
- * 注意：句式难度与学习模式**无关**，只由「我的等级」决定（用户可在生成条件里自行覆盖）；
+ * 注意：句式难度与学习模式**无关**，由当前词库等级 / 已掌握词水平决定（用户可在生成条件里自行覆盖）；
  * 模式只影响词数、复习词占比与场景权重，避免切换模式时难度跟着跳。
  */
 export function recommend(profile: LearnerProfile, mode: LearningMode): GeneratedPlan {
@@ -196,7 +196,7 @@ function baseWordsPerLesson(p: LearnerProfile): number {
 }
 
 function baseDifficulty(p: LearnerProfile): Difficulty {
-  // 日常模式贴合「我的等级」（设置里声明的当前水平），不自动上探到目标级；
+  // 日常模式贴合当前词库推断等级，不自动上探到目标级；
   // 想要更有挑战请用「拉伸」模式（会瞄准下一级）。
   if (p.reviewPressure === 'high') return 'adaptive'
   return clampToDifficulty(p.currentLevel ?? p.averageLevel ?? 'A1')
@@ -261,7 +261,7 @@ function clampRatio(r: number): number {
 }
 
 function clampToDifficulty(level: Level): Difficulty {
-  // Pre-A1 是独立难度档：极短句 + 最基础词汇，与设置里的「我的等级」一一对应
+  // Pre-A1 是独立难度档：极短句 + 最基础词汇，对应最低的词库难度
   if (level === 'Pre-A1') return 'Pre-A1'
   return level
 }

@@ -86,6 +86,12 @@ export function Sheet({
   closeRef.current = onClose
 
   /**
+   * 头部没有任何内容时（如词卡详情：正文里已有大号词形，不再重复标题），
+   * 收紧把手与标题行的纵向间距，避免弹层顶部出现一大片空白。
+   */
+  const hasHeaderContent = Boolean(title || subtitle || headerLeading || headerExtra)
+
+  /**
    * 关闭时立即卸载，不播关闭动画。
    * 桌面端弹层是居中的，translateY(100%) 不足以移出视口；遮罩先淡出、弹层仍停留在
    * 屏幕下方的那 200ms 会被看成「又弹出一个弹窗」。
@@ -189,8 +195,16 @@ export function Sheet({
           onTouchEnd={onTouchEnd}
           onTouchCancel={onTouchEnd}
         >
-          <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-slate-300/80 dark:bg-slate-600 sm:hidden" />
-          <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-4">
+          <div
+            className={`mx-auto h-1 w-10 rounded-full bg-slate-300/80 dark:bg-slate-600 sm:hidden ${
+              hasHeaderContent ? 'mt-2.5' : 'mt-2'
+            }`}
+          />
+          <div
+            className={`flex items-start justify-between gap-3 px-5 ${
+              hasHeaderContent ? 'pb-3 pt-4' : 'pb-1 pt-2 sm:pt-3'
+            }`}
+          >
             <div className="min-w-0 flex-1">
               {headerLeading ?? (
                 <>

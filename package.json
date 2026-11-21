@@ -1,7 +1,7 @@
 {
   "name": "lexicore-learner",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.27.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "version:bump": "node scripts/version-bump.mjs",
     "fill:ipa": "python scripts/fill_ipa.py && python scripts/generate_data.py",
     "gen:lexicon": "node tools/gen-ecdict.cjs",
+    "gen:dicts": "node scripts/gen-dict-bundles.mjs",
     "gen:examples": "node tools/gen-examples.cjs run",
     "gen:examples:list": "node tools/gen-examples.cjs list",
     "gen:examples:next": "node tools/gen-examples.cjs next",
@@ -17,6 +18,7 @@
     "gen:examples:qa": "node tools/gen-examples.cjs qa",
     "gen:examples:emit": "node tools/gen-examples.cjs emit",
     "gen:examples:report": "node tools/gen-examples.cjs report",
+    "gen:books": "tsx tools/gen-book-bundles.ts",
     "report:scenes": "tsx tools/report-scenes.ts",
     "postinstall": "patch-package",
     "preview": "vite preview",

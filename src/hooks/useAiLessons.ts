@@ -32,7 +32,7 @@ const ALLOWED_CAP = 1200
 
 /**
  * 等级窗口只作为「优先范围」：窗口内一个已掌握词都没有时退回全池。
- * 否则用户明明标记了词、只是等级不在当前「我的等级」窗口，就会被误报
+ * 否则用户明明标记了词、只是等级不在当前词库推断窗口，就会被误报
  * 「还没有已掌握的单词」，看起来像词库没连通。
  */
 function scopePool(rawPool: PoolWord[], allowedLevels?: Level[]): PoolWord[] {

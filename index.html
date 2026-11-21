@@ -10,13 +10,15 @@
       (function () {
         try {
           var saved = localStorage.getItem('lexicore-theme')
-          var dark = saved
-            ? saved === 'dark'
-            : window.matchMedia('(prefers-color-scheme: dark)').matches
+          // light/dark 为用户强制指定；缺省或 system 都跟随系统偏好
+          var dark =
+            saved === 'dark' ||
+            (saved !== 'light' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches)
           if (dark) document.documentElement.classList.add('dark')
           document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
           var meta = document.querySelector('meta[name="theme-color"]')
-          if (meta) meta.setAttribute('content', dark ? '#121a15' : '#f6f3ea')
+          if (meta) meta.setAttribute('content', dark ? '#0d1117' : '#f6f3ea')
         } catch (e) {}
       })()
     </script>

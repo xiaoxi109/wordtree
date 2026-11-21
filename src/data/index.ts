@@ -145,7 +145,7 @@ for (const g of PEP_GRADE_ORDER) {
     const enrich = PEP_ENRICH[pw.en]
     // 主词库映射查不到时会落到 thinking 兜底，这时用中文释义再猜一次场景
     const baseCat = categoryOf(pw.en)
-    const cat = baseCat === 'thinking' ? (guessScene(pw.zh || '', '') ?? baseCat) : baseCat
+    const cat = baseCat === 'thinking' ? (guessScene(pw.zh || '', '', pw.en) ?? baseCat) : baseCat
     pepOnlyWords.push({
       word: pw.en,
       level: GRADE_DEFAULT_LEVEL[g] ?? 'A1',
@@ -192,7 +192,7 @@ const ecdictCore: Word[] = (() => {
       // 缺词性的正常词用覆盖表补上
       pos: POS_OVERRIDE[k] ?? w.pos,
       // ECDICT 词没有场景分类：先按释义规则猜，猜不到再回退到默认兜底
-      category: w.category ?? guessScene(w.meaning, w.pos) ?? categoryOf(w.word),
+      category: w.category ?? guessScene(w.meaning, w.pos, w.word) ?? categoryOf(w.word),
       common: isCommon(w.word),
       examples: ECDICT_EXAMPLES[w.word] ?? ECDICT_EXAMPLES_BY_NORM.get(k) ?? w.examples ?? [],
     })

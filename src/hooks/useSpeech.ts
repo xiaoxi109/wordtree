@@ -14,7 +14,7 @@ let audioShared: AudioBufferSourceNode | null = null
 let audioCtxShared: AudioContext | null = null
 let reqIdShared = 0
 
-// 播放状态必须模块级共享：SpeakerBtn / 设置页 / 复习页 / 闯关页会同时存在多个
+// 播放状态必须模块级共享：SpeakerBtn / 设置页 / 复习页会同时存在多个
 // useSpeech 实例，若各自 useState，某处 stop() 后其他实例的按钮会一直显示「播放中」。
 let _speaking = false
 const speakingSubscribers = new Set<(v: boolean) => void>()

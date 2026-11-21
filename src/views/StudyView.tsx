@@ -8,12 +8,11 @@ import {
   type StudyCard,
 } from '../lib/study'
 import { posShort } from '../lib/pos'
-import { applyBattleResult } from '../lib/spirit'
-import { SpeakerBtn, LevelBadge, GradeBadge } from '../components/word'
+import { SpeakerBtn } from '../components/word'
 import { DisplayModeToggle, useDisplayMode } from '../components/display'
 import { useSpeech } from '../hooks/useSpeech'
 import { appendWordEvent, directionFromDisplayMode } from '../lib/events'
-import type { Route } from '../data/levels'
+import type { Word } from '../data'
 import { CheckIcon, RotateCcwIcon, XIcon, EyeIcon, EyeOffIcon } from '../components/icons'
 
 type Stats = { again: number; good: number }
@@ -41,7 +40,8 @@ function shuffleCards<T>(arr: T[]): T[] {
  *  - both→ 正面：英文词形+音标 + 中文释义 + 词性 + 等级 + 徽章；展开：双语例句
  */
 interface StudyViewProps {
-  route?: Route
+  /** 外部词库词池；core 传 undefined。 */
+  pool?: Word[]
   masteredSet: Set<string>
   onApplyMark: (words: string[], mode: 'add' | 'remove') => void
   active?: boolean
@@ -53,7 +53,7 @@ export default function StudyView(props: StudyViewProps) {
 }
 
 function WordStudyDeck({
-  route: _route = 'level',
+  pool,
   masteredSet,
   onApplyMark,
   active = true,
@@ -90,8 +90,9 @@ function WordStudyDeck({
         wrongOnly: false,
         masteredOnly: true,
         masteredSet: masteredRef.current,
+        pool,
       }),
-    [],
+    [pool],
   )
 
   const loadDeck = useCallback(() => {
@@ -143,8 +144,6 @@ function WordStudyDeck({
 
       applyStudyGrade(card.key, grade === 'good' ? 'good' : 'again')
       onApplyMark([card.word], grade === 'good' ? 'add' : 'remove')
-      // 词灵同步战斗结果（未收服的词不处理）
-      applyBattleResult(card.word, grade === 'good')
 
       void appendWordEvent({
         word_key: card.key,
@@ -289,11 +288,6 @@ function WordStudyDeck({
                     {posShort({ pos: card.pos, meaning: card.meaning })}
                   </span>
                 )}
-                {card.grade ? (
-                  <GradeBadge grade={card.grade} />
-                ) : (
-                  card.level && <LevelBadge level={card.level} />
-                )}
                 {card.common && (
                   <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
                     常用词
@@ -420,7 +414,7 @@ function WordStudyDeck({
             onClick={() => gradeCard('good')}
             className="flex items-center justify-center gap-2.5 rounded-[16px] border border-brand-200/60 bg-brand-50/80 px-3 py-4 transition active:scale-[0.98] dark:border-brand-500/25 dark:bg-brand-500/10"
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm dark:bg-brand-500/25 dark:text-brand-200 dark:shadow-none">
               <CheckIcon width={16} height={16} />
             </span>
             <div className="flex flex-col items-center">

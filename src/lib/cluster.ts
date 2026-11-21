@@ -37,13 +37,13 @@ export interface TopicMeta {
 
 export const TOPICS: TopicMeta[] = [
   { id: 'random', label: '随机', categories: [] },
-  { id: 'daily', label: '日常生活', categories: ['home', 'people', 'clothes', 'health', 'shopping', 'time'] },
+  { id: 'daily', label: '日常生活', categories: ['home', 'people', 'clothes', 'health', 'shopping', 'time', 'festival'] },
   { id: 'campus', label: '校园学习', categories: ['education', 'communication', 'grammar', 'questions'] },
   { id: 'food', label: '美食', categories: ['food'] },
-  { id: 'travel', label: '旅行出行', categories: ['travel', 'space', 'nature'] },
-  { id: 'tech', label: '科技', categories: ['science', 'media'] },
-  { id: 'work', label: '职场', categories: ['work', 'society'] },
-  { id: 'story', label: '动物与童趣', categories: ['animals', 'toys', 'arts', 'emotions'] },
+  { id: 'travel', label: '旅行出行', categories: ['travel', 'space', 'nature', 'weather', 'city'] },
+  { id: 'tech', label: '科技', categories: ['science', 'media', 'tech'] },
+  { id: 'work', label: '职场', categories: ['work', 'society', 'law'] },
+  { id: 'story', label: '动物与童趣', categories: ['animals', 'toys', 'arts', 'emotions', 'music'] },
 ]
 
 export const TOPIC_LABEL: Record<TopicId, string> = Object.fromEntries(

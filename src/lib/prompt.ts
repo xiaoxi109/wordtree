@@ -2,14 +2,6 @@ import type { LessonGroup, TopicId } from './cluster'
 import { TOPIC_LABEL } from './cluster'
 import { FUNCTION_WORD_LIST } from './vocab'
 import type { ChatMessage } from './llm'
-import {
-  GRADE_RUNGS,
-  LEVEL_RUNGS,
-  gradeToLevel,
-  type GradeRung,
-  type LevelRung,
-  type Route,
-} from '../data/levels'
 
 export type Difficulty = 'adaptive' | 'Pre-A1' | 'A1' | 'A2' | 'B1' | 'B2' | 'C1'
 export type LessonKind = 'story' | 'dialogue' | 'diary' | 'email' | 'article' | 'poem'
@@ -113,80 +105,32 @@ export function difficultyHint(d: Difficulty): string {
   return (DIFFICULTIES.find((x) => x.id === d) ?? DIFFICULTIES[0]).hint
 }
 
-/* ------------------- 难度档 × 设置里的阶梯等级模式 ------------------- */
-/**
- * 内部难度值始终是 CEFR 档位（planner / prompt / 数据库都用它），
- * 只有显示标签跟随设置里的「学习路线」：西式显示 A1…，中式显示年级。
- */
-
-type ConcreteDifficulty = Exclude<Difficulty, 'adaptive'>
-
-function levelToDifficulty(level: LevelRung): ConcreteDifficulty {
-  if (level === 'Pre-A1') return 'Pre-A1'
-  if (level === 'A1') return 'A1'
-  if (level === 'A2') return 'A2'
-  if (level === 'B1') return 'B1'
-  if (level === 'C1') return 'C1'
-  // 词库无 C2 词：回落到 B2
-  return 'B2'
-}
-
-function rungLevel(route: Route, rung: GradeRung | LevelRung): LevelRung | null {
-  if (route === 'grade') {
-    return GRADE_RUNGS.some((g) => g.id === rung) ? gradeToLevel(rung as GradeRung) : null
-  }
-  return LEVEL_RUNGS.some((l) => l.id === rung) ? (rung as LevelRung) : null
-}
-
-/** 设置里的「我的等级」落在哪一档，用于生成条件里标注对应关系。 */
-export function difficultyForRung(
-  route: Route,
-  rung: GradeRung | LevelRung,
-): ConcreteDifficulty | null {
-  const level = rungLevel(route, rung)
-  return level ? levelToDifficulty(level) : null
-}
-
-/** 难度选项：id 是选项唯一标识（CEFR 档位或年级 id），difficulty 是解析后的内部难度。 */
+/* ------------------------- 难度选项（仅 CEFR） ------------------------- */
+/** 难度选项：id 与内部难度一致，都是 CEFR 档位或 adaptive。 */
 export interface DifficultyOption {
   id: string
   difficulty: Difficulty
   label: string
 }
 
-/** 按阶梯模式生成难度选项：西式每档一个 CEFR 等级；中式每个年级一档，与「我的等级」页一一对应。 */
-export function difficultyOptions(route: Route): DifficultyOption[] {
-  if (route !== 'grade') {
-    return DIFFICULTIES.map((d) => ({ id: d.id, difficulty: d.id, label: d.label }))
-  }
-  const opts: DifficultyOption[] = [{ id: 'adaptive', difficulty: 'adaptive', label: '自适应' }]
-  // 每个年级一档，与「我的等级」页完全一致（C2 不是年级，无需处理）
-  for (const g of GRADE_RUNGS) {
-    opts.push({ id: g.id, difficulty: levelToDifficulty(g.level), label: g.label })
-  }
-  return opts
+/** 统一使用 CEFR 档位，不再有中式年级选项。 */
+export function difficultyOptions(): DifficultyOption[] {
+  return DIFFICULTIES.map((d) => ({ id: d.id, difficulty: d.id, label: d.label }))
 }
 
-/** 选项 id → 内部难度（自适应 / CEFR 档位）。 */
-export function resolveDifficulty(route: Route, id: string): Difficulty {
-  return difficultyOptions(route).find((d) => d.id === id)?.difficulty ?? 'adaptive'
+/** 选项 id → 内部难度。 */
+export function resolveDifficulty(id: string): Difficulty {
+  return difficultyOptions().find((d) => d.id === id)?.difficulty ?? 'adaptive'
 }
 
-/** 难度选项 id 在界面上的显示名（自适应 / CEFR 等级 / 中式年级）。 */
-export function difficultyText(route: Route, id: string): string {
-  return difficultyOptions(route).find((d) => d.id === id)?.label ?? '自适应'
+/** 选项 id 在界面上的显示名。 */
+export function difficultyText(id: string): string {
+  return difficultyOptions().find((d) => d.id === id)?.label ?? '自适应'
 }
 
-/** 推荐难度对应的选项 id：中式路线推荐档覆盖多个年级时，优先取「我的等级」所在年级。 */
-export function recommendedOptionId(
-  route: Route,
-  rec: Difficulty,
-  currentRung?: GradeRung | LevelRung,
-): string {
-  if (route !== 'grade') return rec
-  const hits = difficultyOptions(route).filter((d) => d.difficulty === rec && d.id !== 'adaptive')
-  if (hits.length === 0) return 'adaptive'
-  return hits.find((d) => d.id === currentRung)?.id ?? hits[0].id
+/** 推荐难度对应的选项 id（CEFR 档位与 id 一一对应）。 */
+export function recommendedOptionId(rec: Difficulty): string {
+  return rec
 }
 
 export function outputFormat(kind: LessonKind): string {

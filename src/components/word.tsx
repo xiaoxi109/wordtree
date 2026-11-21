@@ -1,43 +1,17 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ALL_WORDS, CATEGORIES, LEVELS, groupByCategory } from '../data'
-import type { CategoryId, Level, Word } from '../data'
-import { GRADE_RUNGS } from '../data/levels'
-import { GRADE_STYLE, GRADES } from '../data/grades'
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ALL_WORDS, CATEGORIES, groupByCategory } from '../data'
+import type { CategoryId, Word } from '../data'
 import { useSpeech } from '../hooks/useSpeech'
 import { useLexiconVersion } from '../hooks/useLexicon'
+import { useRichEntry } from '../hooks/useRichEntry'
 import { wordKey } from '../lib/cluster'
 import { lookupWord } from '../lib/dict'
+import { meaningGroups } from '../lib/meaningGroups'
 import { textTokens } from '../lib/parse'
-import { POS_GROUPS, posLabel, posShort, type PosId } from '../lib/pos'
+import { POS_GROUPS, posLabel, type PosId } from '../lib/pos'
 import { DisplayModeToggle, type DisplayMode } from './display'
 import { CheckIcon, ChevronRightIcon, SearchIcon, SlidersIcon, SpeakerIcon, XIcon } from './icons'
 import { Sheet } from './Sheet'
-
-export const LEVEL_STYLE: Record<Level, { badge: string; dot: string }> = {
-  'Pre-A1': {
-    badge: 'bg-emerald-100/80 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
-    dot: 'bg-emerald-500',
-  },
-  A1: { badge: 'bg-sky-100/80 text-sky-800 dark:bg-sky-500/15 dark:text-sky-300', dot: 'bg-sky-500' },
-  A2: { badge: 'bg-violet-100/80 text-violet-800 dark:bg-violet-500/15 dark:text-violet-300', dot: 'bg-violet-500' },
-  B1: { badge: 'bg-amber-100/80 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300', dot: 'bg-amber-500' },
-  B2: { badge: 'bg-rose-100/80 text-rose-800 dark:bg-rose-500/15 dark:text-rose-300', dot: 'bg-rose-500' },
-  C1: { badge: 'bg-indigo-100/80 text-indigo-800 dark:bg-indigo-500/15 dark:text-indigo-300', dot: 'bg-indigo-500' },
-}
-
-// 年级徽标：人教词表显示「小学 / 初一 / 初二 …」而非 CEFR 等级。
-const GRADE_LABEL: Record<string, string> = Object.fromEntries(GRADES.map((g) => [g.id, g.label]))
-
-export function GradeBadge({ grade }: { grade: string }) {
-  const s = GRADE_STYLE[grade as keyof typeof GRADE_STYLE]
-  if (!s) return null
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border border-black/5 px-2 py-0.5 text-[11px] font-bold tracking-wide dark:border-white/10 ${s.badge}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      {GRADE_LABEL[grade] ?? grade}
-    </span>
-  )
-}
 
 // Scene category accent dots (used in grouped section headers).
 export const CAT_DOT: Record<CategoryId, string> = {
@@ -70,16 +44,15 @@ export const CAT_DOT: Record<CategoryId, string> = {
   questions: 'bg-blue-500',
   toys: 'bg-yellow-500',
   idioms: 'bg-indigo-500',
-}
-
-export function LevelBadge({ level }: { level: Level }) {
-  const s = LEVEL_STYLE[level]
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full border border-black/5 px-2 py-0.5 text-[11px] font-bold tracking-wide dark:border-white/10 ${s.badge}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
-      {level}
-    </span>
-  )
+  sports: 'bg-lime-600',
+  music: 'bg-pink-600',
+  tech: 'bg-blue-600',
+  city: 'bg-stone-500',
+  festival: 'bg-rose-600',
+  law: 'bg-slate-700',
+  military: 'bg-stone-700',
+  religion: 'bg-indigo-600',
+  weather: 'bg-sky-600',
 }
 
 export function SpeakerBtn({
@@ -166,7 +139,6 @@ export function WordCard({
 }) {
   const showEn = mode !== 'zh'
   const showZh = mode !== 'en'
-  const pos = posShort(word)
   return (
     // 外层不能用 <button>：内部还要放「掌握勾选」和 SpeakerBtn 两个可交互控件，
     // 原生 button 嵌套会让键盘 Tab / Enter 行为错乱。改用带 role 的 div + 键盘处理。
@@ -187,16 +159,14 @@ export function WordCard({
       }`}
     >
       <div className="relative flex w-full items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {word.grade ? <GradeBadge grade={word.grade} /> : <LevelBadge level={word.level} />}
-          {word.common && (
-            <span className="rounded-full border border-amber-200/60 bg-amber-100/70 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
-              常用
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {showEn ? (
+            <span className="min-w-0 break-words font-display text-[18px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-slate-50">
+              {word.word}
             </span>
-          )}
-          {pos && (
-            <span className="rounded-full bg-slate-900/5 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500 dark:bg-white/10 dark:text-slate-300">
-              {pos}
+          ) : (
+            <span className="min-w-0 break-words text-base font-bold leading-snug text-slate-900 dark:text-slate-50">
+              {word.meaning}
             </span>
           )}
         </div>
@@ -212,36 +182,26 @@ export function WordCard({
           onKeyDown={(e) => e.stopPropagation()}
           className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition ${
             mastered
-              ? 'border-brand-600 bg-brand-600 text-white shadow-sm'
+              ? 'border-brand-600 bg-brand-600 text-white shadow-sm dark:border-brand-400/50 dark:bg-brand-500/25 dark:text-brand-200'
               : 'border-slate-300/70 bg-white/40 text-transparent hover:border-brand-400 hover:text-brand-400 dark:border-slate-600 dark:bg-slate-900/30'
           }`}
         >
           <CheckIcon width={14} height={14} />
         </button>
       </div>
-      <div className="relative mt-1.5 flex w-full min-w-0 items-baseline justify-between gap-2">
-        {showEn ? (
-          <span className="min-w-0 break-words font-display text-[18px] font-semibold leading-tight tracking-tight text-slate-900 dark:text-slate-50">
-            {word.word}
-          </span>
-        ) : (
-          <span className="min-w-0 break-words text-base font-bold leading-snug text-slate-900 dark:text-slate-50">
+      {showEn && <span className="relative text-[11px] text-slate-400 dark:text-slate-500">{word.ipa}</span>}
+      <div className="relative flex w-full items-end justify-between gap-2">
+        {showZh ? (
+          <span
+            className={`min-w-0 text-[12px] leading-relaxed text-slate-500 dark:text-slate-400 ${
+              showEn ? 'line-clamp-1' : 'line-clamp-2'
+            }`}
+          >
             {word.meaning}
           </span>
-        )}
-        {/* 发音按钮常驻：中文模式下也保留，点击才读英文，不主动暴露词形 */}
-        <SpeakerBtn text={word.word} iconSize={16} className="-mr-1 shrink-0" />
+        ) : <span className="flex-1" />}
+        <SpeakerBtn text={word.word} iconSize={16} className="-mb-1 -mr-1 shrink-0" />
       </div>
-      {showEn && <span className="relative text-[11px] text-slate-400 dark:text-slate-500">{word.ipa}</span>}
-      {showZh && (
-        <span
-          className={`relative text-[12px] leading-relaxed text-slate-500 dark:text-slate-400 ${
-            showEn ? 'line-clamp-1' : 'line-clamp-2'
-          }`}
-        >
-          {word.meaning}
-        </span>
-      )}
     </div>
   )
 }
@@ -257,7 +217,10 @@ export function WordDetailBody({
   /** 例句中点词回调，打开对应词的详情 */
   onOpenWord?: (w: Word) => void
 }) {
-  const pos = posShort(word)
+  /** 富字典（例句 / 短语 / 近义词）按需补齐：课程词自带例句优先，不足时用富字典兜底。 */
+  const rich = useRichEntry(word)
+  /** 释义按词性分组展示（词性列 + 正文悬挂缩进） */
+  const meaning = useMemo(() => meaningGroups(word.meaning), [word.meaning])
 
   /** 词键 → Word 的快速索引：例句点词时查词用（扩展词加载后随版本重建） */
   const lexV = useLexiconVersion()
@@ -314,10 +277,14 @@ export function WordDetailBody({
     <div>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="eyebrow">{word.grade ? '中式阶梯' : '西式阶梯'}</p>
-          <h2 className="mt-1.5 break-words font-display text-[34px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
-            {word.word}
-          </h2>
+          <p className="eyebrow">词汇级别</p>
+          {/* 词形与音标同一行：音标跟在词形右侧、基线对齐，长词自动换行 */}
+          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <h2 className="break-words font-display text-[34px] font-semibold leading-none tracking-tight text-slate-900 dark:text-slate-50">
+              {word.word}
+            </h2>
+            <span className="shrink-0 text-[15px] text-slate-400">{word.ipa}</span>
+          </div>
         </div>
         <SpeakerBtn
           text={word.word}
@@ -327,18 +294,9 @@ export function WordDetailBody({
         />
       </div>
 
-      {/* 音标与徽章同一行：徽章紧跟音标右侧，放不下时横向轻扫，不再独占一行把释义往下挤 */}
-      <div className="mt-3 flex items-center gap-2">
-        <span className="shrink-0 text-[13px] text-slate-400">{word.ipa}</span>
-        <div className="no-scrollbar flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-          <span className="shrink-0">
-            {word.grade ? <GradeBadge grade={word.grade} /> : <LevelBadge level={word.level} />}
-          </span>
-          {pos && (
-            <span className="shrink-0 whitespace-nowrap rounded-full border border-slate-200/60 bg-white/70 px-2 py-0.5 text-[11px] font-bold text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-300">
-              {pos}
-            </span>
-          )}
+      {/* 徽标行：词性徽标已移除（释义区仍按词性分组展示），仅保留常用词 / 已掌握 */}
+      {(word.common || mastered) && (
+        <div className="no-scrollbar mt-3 flex min-w-0 items-center gap-1.5 overflow-x-auto">
           {word.common && (
             <span className="shrink-0 whitespace-nowrap rounded-full border border-amber-200/60 bg-amber-100/70 px-2 py-0.5 text-[11px] font-bold text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/15 dark:text-amber-300">
               常用词
@@ -351,33 +309,118 @@ export function WordDetailBody({
             </span>
           )}
         </div>
+      )}
+
+      {/* 释义：按词性分组两列展示。词性列宽 auto 自适应本词最长标签：
+          短标签（n.）不再留一大截空白，长标签（modal v.）也不会被 34px 挤换行；
+          同一卡片内各行释义左缘仍保持对齐 */}
+      <div className="surface-inset mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 gap-y-0.5 px-3.5 py-3">
+        {meaning.length > 0 ? (
+          meaning.map((g, i) => (
+            <Fragment key={i}>
+              <span className="shrink-0 text-[13px] font-medium leading-[1.7] text-brand-600 dark:text-brand-400">
+                {g.pos}
+              </span>
+              <span className="min-w-0 text-[14.5px] leading-[1.7] text-slate-700 dark:text-slate-200">
+                {g.text}
+              </span>
+            </Fragment>
+          ))
+        ) : (
+          <p className="col-span-2 text-[14.5px] leading-[1.7] text-slate-700 dark:text-slate-200">（暂无释义）</p>
+        )}
       </div>
 
-      <div className="surface-inset mt-4 p-4">
-        <p className="text-lg font-semibold leading-relaxed text-slate-800 dark:text-slate-100">{word.meaning}</p>
-      </div>
-
-      <p className="mb-2.5 mt-6 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+      <p className="mb-2 mt-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
         Examples · 例句{onOpenWord && <span className="ml-2 font-normal tracking-normal text-slate-300">（点词查卡）</span>}
       </p>
-      {word.examples.length > 0 ? (
-        <ul className="space-y-3">
-          {word.examples.map((ex, i) => (
-            <li key={i} className="surface px-4 py-3.5">
+      {rich.examples.length > 0 ? (
+        <ul className="space-y-2">
+          {rich.examples.map((ex, i) => (
+            <li key={i} className="surface px-3.5 py-3">
               <div className="flex items-start justify-between gap-2">
-                <p className="font-display text-[15px] leading-relaxed text-slate-800 dark:text-slate-100">
+                <p className="font-display text-[14.5px] leading-relaxed text-slate-800 dark:text-slate-100">
                   {onOpenWord ? renderClickableEn(ex.en) : ex.en}
                 </p>
                 <SpeakerBtn text={ex.en} rate={0.9} iconSize={16} className="-mr-1 -mt-1 shrink-0" />
               </div>
-              <p className="mt-1 text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">{ex.zh}</p>
+              <p className="mt-0.5 text-[12.5px] leading-relaxed text-slate-500 dark:text-slate-400">{ex.zh}</p>
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="rounded-[18px] border border-dashed border-slate-300/80 py-6 text-center text-sm text-slate-400 dark:border-slate-700/70">
-          暂无例句（中式词源补充）
+      ) : rich.loading ? (
+        <p className="rounded-[18px] border border-dashed border-slate-300/80 py-5 text-center text-sm text-slate-400 dark:border-slate-700/70">
+          正在加载例句…
         </p>
+      ) : (
+        <p className="rounded-[18px] border border-dashed border-slate-300/80 py-5 text-center text-sm text-slate-400 dark:border-slate-700/70">
+          暂无例句
+        </p>
+      )}
+
+      {/* 短语搭配 */}
+      {rich.phrases.length > 0 && (
+        <>
+          <p className="mb-2 mt-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+            Phrases · 短语
+          </p>
+          <ul className="space-y-1.5">
+            {rich.phrases.map((ph, i) => (
+              <li key={i} className="surface flex items-center gap-3 px-3.5 py-2">
+                <div className="min-w-0 flex-1">
+                  <p className="font-display text-[14.5px] leading-relaxed text-slate-800 dark:text-slate-100">{ph.en}</p>
+                  <p className="mt-0.5 text-[12.5px] leading-relaxed text-slate-500 dark:text-slate-400">{ph.zh}</p>
+                </div>
+                <SpeakerBtn text={ph.en} rate={0.9} iconSize={16} className="-mr-1 shrink-0" />
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {/* 近义词（按词性分组，词条可点击查词） */}
+      {rich.synonyms.length > 0 && (
+        <>
+          <p className="mb-2 mt-4 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">
+            Synonyms · 近义词
+          </p>
+          <ul className="space-y-1.5">
+            {rich.synonyms.map((sy, i) => (
+              <li key={i} className="surface px-3.5 py-2.5">
+                <div className="flex items-start gap-2">
+                  {sy.pos && (
+                    <span className="shrink-0 whitespace-nowrap rounded-full border border-slate-200/60 bg-white/70 px-1.5 py-0.5 text-[10.5px] font-bold text-slate-500 dark:border-slate-700/60 dark:bg-slate-800/60 dark:text-slate-300">
+                      {sy.pos}
+                    </span>
+                  )}
+                  <p className="min-w-0 text-[12.5px] leading-relaxed text-slate-600 dark:text-slate-300">{sy.meaning}</p>
+                </div>
+                <p className="mt-1 text-[13.5px] leading-relaxed text-slate-700 dark:text-slate-200">
+                  {sy.words.map((w, j) => {
+                    const hit = onOpenWord ? resolveWord(w) : null
+                    return (
+                      <span key={j}>
+                        {j > 0 && <span className="mx-1.5 text-slate-300 dark:text-slate-600">/</span>}
+                        {hit ? (
+                          <button
+                            type="button"
+                            onClick={() => onOpenWord?.(hit)}
+                            className="rounded px-0.5 text-brand-700 transition hover:bg-brand-100 active:bg-brand-500/25 dark:text-brand-300 dark:hover:bg-brand-500/20"
+                            title="点击查词"
+                          >
+                            {w}
+                          </button>
+                        ) : (
+                          <span>{w}</span>
+                        )}
+                      </span>
+                    )
+                  })}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </div>
   )
@@ -431,7 +474,7 @@ export function WordModal({
           className={`flex w-full items-center justify-center gap-1.5 rounded-[18px] py-3.5 text-[13px] font-semibold transition active:scale-[0.985] ${
             mastered
               ? 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/10 dark:text-slate-200 dark:hover:bg-white/15'
-              : 'bg-brand-600 text-white shadow-float hover:bg-brand-700'
+              : 'border border-brand-500/50 bg-brand-100 text-brand-800 hover:bg-brand-200 dark:border-brand-400/50 dark:bg-brand-500/15 dark:text-brand-200 dark:hover:bg-brand-500/25'
           }`}
         >
           {mastered ? <XIcon width={16} height={16} /> : <CheckIcon width={16} height={16} />}
@@ -520,11 +563,6 @@ function FilterGroup({ label, children }: { label: string; children: ReactNode }
 
 /* Configurable filter bar reused by Home and Unmastered list views. */
 export function FilterBar({
-  route,
-  levelFilter,
-  setLevelFilter,
-  gradeFilter,
-  setGradeFilter,
   catFilter,
   setCatFilter,
   search,
@@ -536,17 +574,11 @@ export function FilterBar({
   setShowMastered,
   displayMode,
   setDisplayMode,
-  hideLevel = false,
   hideCategory = false,
   posFilter,
   setPosFilter,
   posCounts,
 }: {
-  route?: 'grade' | 'level'
-  levelFilter?: Level | 'all'
-  setLevelFilter?: (v: Level | 'all') => void
-  gradeFilter?: string | 'all'
-  setGradeFilter?: (v: string | 'all') => void
   catFilter: CategoryId | 'all'
   setCatFilter: (v: CategoryId | 'all') => void
   search: string
@@ -559,7 +591,6 @@ export function FilterBar({
   /** 传了才显示「中英 / 英文 / 中文」切换（列表卡片显示语言） */
   displayMode?: DisplayMode
   setDisplayMode?: (m: DisplayMode) => void
-  hideLevel?: boolean
   hideCategory?: boolean
   /** 传了才显示词性筛选（多选，可组合） */
   posFilter?: Set<PosId>
@@ -570,8 +601,6 @@ export function FilterBar({
   const [open, setOpen] = useState(false)
 
   const reset = () => {
-    setLevelFilter?.('all')
-    setGradeFilter?.('all')
     setCatFilter('all')
     setShowUnmastered?.(true)
     setShowMastered?.(false)
@@ -643,7 +672,7 @@ export function FilterBar({
         open={open}
         onClose={() => setOpen(false)}
         title="筛选单词"
-        subtitle="仅用于浏览；输入关键词查词时自动忽略筛选、检索全词库"
+        subtitle="仅用于浏览；输入关键词查词时自动忽略筛选、检索当前词库"
         footer={
           <button
             onClick={reset}
@@ -654,30 +683,6 @@ export function FilterBar({
         }
       >
         <div className="no-scrollbar max-h-[50dvh] space-y-4 overflow-y-auto pb-1">
-          {!hideLevel && (route === 'grade' ? (
-            <FilterGroup label="中式等级">
-              <FilterChip active={gradeFilter === 'all'} onClick={() => setGradeFilter?.('all')}>
-                全部
-              </FilterChip>
-              {GRADE_RUNGS.map((g) => (
-                <FilterChip key={g.id} active={gradeFilter === g.id} onClick={() => setGradeFilter?.(g.id)}>
-                  {g.label}
-                </FilterChip>
-              ))}
-            </FilterGroup>
-          ) : (
-            <FilterGroup label="西式等级">
-              <FilterChip active={levelFilter === 'all'} onClick={() => setLevelFilter?.('all')}>
-                全部
-              </FilterChip>
-              {LEVELS.map((l) => (
-                <FilterChip key={l.id} active={levelFilter === l.id} onClick={() => setLevelFilter?.(l.id)}>
-                  {l.id}
-                </FilterChip>
-              ))}
-            </FilterGroup>
-          ))}
-
           {!hideCategory && (
             <FilterGroup label="场景">
               <FilterChip active={catFilter === 'all'} onClick={() => setCatFilter('all')}>

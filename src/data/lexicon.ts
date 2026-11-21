@@ -58,7 +58,7 @@ export function ensureExtraLoaded(): Promise<void> {
         seen.add(k)
         ALL_WORDS.push({
           ...w,
-          category: w.category ?? guessScene(w.meaning, w.pos) ?? categoryOf(w.word),
+          category: w.category ?? guessScene(w.meaning, w.pos, w.word) ?? categoryOf(w.word),
           common: isCommon(w.word),
           examples: ECDICT_EXAMPLES[w.word] ?? w.examples ?? [],
         })

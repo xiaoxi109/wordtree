@@ -1,0 +1,45 @@
+/**
+ * 书籍课程目录（自动生成，勿手改）
+ *   由 tools/gen-book-bundles.ts 生成，数据源：typewords.cc 的「文章学习」资源
+ *   重新生成：npm run gen:books
+ */
+import type { BookMeta } from '../../lib/bookTypes'
+
+export const BOOK_CATALOG: BookMeta[] = [
+  {
+    id: "nce-1",
+    name: "新概念英语1",
+    description: "第一册《英语初阶》讲练基本语音、语调、语法、词法、句法及句型结构，是练好英语基本功的关键。",
+    cover: "books/covers/nce-1.png",
+    count: 72,
+    level: "A1",
+    lexiconId: "nce-new-1",
+  },
+  {
+    id: "nce-2",
+    name: "新概念英语2",
+    description: "第二册《实践与进步》由浅入深，通过96篇幽默短文的学习，学习者将能在听、说、读、写四个维度全面实践英语；培养英文语感、纠正发音和培养自然语调；掌握归纳总结、造句及书写简单私人信件的能力。",
+    cover: "books/covers/nce-2.png",
+    count: 96,
+    level: "A2",
+    lexiconId: "nce-new-2",
+  },
+  {
+    id: "nce-3",
+    name: "新概念英语3",
+    description: "从第三册《培养技能》开始，文章更加注重分析句子之间内在的逻辑关系，并进一步扩充讲解词汇、语法及句型的实战运用。通过这一册的学习，学员们听、说、读、写的能力有一个新的飞跃，能够熟练地表达和使用英语。",
+    cover: "books/covers/nce-3.png",
+    count: 60,
+    level: "B1",
+    lexiconId: "nce-new-3",
+  },
+  {
+    id: "nce-4",
+    name: "新概念英语4",
+    description: "第四册《流利英语》,涵盖了文化、经济、哲学、艺术、体育、政治等三十多个学科门类，语言文字精美独到，句型结构复杂多变而又地道酣畅，适用于有志于进一步深入学习和掌握英语到游刃有余的境界的同学。学完四册的同学可以轻松阅读英文报刊与文学作品 ，加以适当实战，语言能力足以胜任欧美的生活和工作。",
+    cover: "books/covers/nce-4.png",
+    count: 47,
+    level: "B2",
+    lexiconId: "nce-new-4",
+  },
+]

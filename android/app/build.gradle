@@ -7,8 +7,8 @@ android {
         applicationId "com.lexicore.learner"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 116
-        versionName "0.17.0"
+        versionCode 151
+        versionName "0.27.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -21,6 +21,11 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+    // 书籍课程的原书录音（600MB+）已经是压缩格式：
+    // 不再二次 deflate，既省打包时间，也让 WebView 能直接按字节范围流式读取。
+    androidResources {
+        noCompress += 'mp3'
     }
     applicationVariants.all { variant ->
         variant.outputs.all {

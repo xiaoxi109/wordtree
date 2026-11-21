@@ -57,7 +57,7 @@ export function SpeechControls({
         <button
           onClick={queue.toggle}
           disabled={!total}
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-600 text-white shadow-ink transition duration-200 hover:bg-brand-700 active:scale-95 disabled:opacity-40"
+          className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-600 text-white shadow-ink transition duration-200 hover:bg-brand-700 active:scale-95 disabled:opacity-40 dark:border dark:border-brand-400/50 dark:bg-brand-500/15 dark:text-brand-200 dark:shadow-none dark:hover:bg-brand-500/25"
           aria-label={active ? '暂停' : '播放'}
         >
           {active ? <PauseIcon width={22} height={22} /> : <PlayIcon width={22} height={22} />}

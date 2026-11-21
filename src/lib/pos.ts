@@ -122,6 +122,14 @@ function splitTokens(raw: string): string[] {
 }
 
 /**
+ * 判断一个词性 token 是否是已知缩写。
+ * 用于从中文释义文本里识别段首的词性前缀（如 "v." "adj."）。
+ */
+export function isKnownPosToken(token: string): boolean {
+  return Boolean(TAG_MAP[normalizeToken(token)])
+}
+
+/**
  * 提取一个词的词性标签（可能多个，如 `n./v.`）。
  * 兜底顺序：`pos` 字段 → 中文释义前缀（人教补充词）→ 其他。
  */

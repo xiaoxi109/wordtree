@@ -25,27 +25,29 @@
 }
 
 /*
- * 深色配色：冷调墨绿灰，按明度分层（数字小＝亮文字，数字大＝暗表面）。
- * 白色改为柔和冷白：全站 dark:bg-white/10 之类叠加层不再刺眼，也不发灰脏。
+ * 深色配色：中性冷调夜色（蓝灰底，无彩色偏色），按明度分层（数字小＝亮文字，数字大＝暗表面）。
+ * 绿色只作为品牌点缀出现在按钮 / 选中态，不污染中性表面与文字，夜间阅读不发脏。
+ * 层级：页面底(950) ＜ 吸顶栏/导航(950/95) ＜ 浮层(900) ＜ 卡片(800) ＜ 描边(700)。
  */
 .dark {
   color-scheme: dark;
-  --tone-white: 226 236 228;
-  --tone-50: 242 247 243;
-  --tone-100: 228 237 231;
-  --tone-200: 200 214 205;
-  --tone-300: 170 188 177;
-  --tone-400: 140 159 147;
-  --tone-500: 110 130 118;
-  --tone-600: 78 97 86;
-  --tone-700: 55 71 62;
-  --tone-800: 38 51 44;
-  --tone-900: 27 37 31;
-  --tone-950: 18 26 21;
-  --page-bg: #121a15;
+  --tone-white: 255 255 255;
+  --tone-50: 245 247 250;
+  --tone-100: 230 234 240;
+  --tone-200: 205 211 220;
+  --tone-300: 171 179 191;
+  --tone-400: 136 145 158;
+  --tone-500: 101 110 124;
+  --tone-600: 75 83 96;
+  --tone-700: 48 56 68;
+  --tone-800: 33 40 50;
+  --tone-900: 22 27 34;
+  --tone-950: 14 18 24;
+  --page-bg: #0d1117;
+  /* 播放器进度条：轨道走中性白叠层，填充仍用品牌绿 */
   --seek-fill: #4d9980;
-  --seek-track: rgb(226 236 228 / 0.18);
-  --seek-thumb-ring: #1b241e;
+  --seek-track: rgb(255 255 255 / 0.14);
+  --seek-thumb-ring: #0d1117;
 }
 
 html,
@@ -73,9 +75,10 @@ body {
 }
 
 .dark body {
+  /* 夜间模式：只留极淡的品牌绿氛围光，不引入黄绿偏色，保持中性夜感 */
   background-image:
-    radial-gradient(900px 500px at 8% -14%, rgba(217, 242, 124, 0.06), transparent 62%),
-    radial-gradient(1000px 560px at 100% -4%, rgba(78, 153, 128, 0.14), transparent 58%);
+    radial-gradient(900px 500px at 8% -14%, rgba(77, 153, 128, 0.05), transparent 62%),
+    radial-gradient(1000px 560px at 100% -4%, rgba(77, 153, 128, 0.08), transparent 58%);
 }
 
 ::selection {
@@ -83,8 +86,8 @@ body {
   color: #191713;
 }
 .dark ::selection {
-  background: rgba(78, 153, 128, 0.45);
-  color: #f0f5f1;
+  background: rgba(77, 153, 128, 0.42);
+  color: #f5f7fa;
 }
 
 /* ------------------------------------------------------------------ */
@@ -105,12 +108,12 @@ body {
   }
 
   /* 按钮：44px 触控高度基线由内边距保证 */
+  /* 主操作按钮统一用品牌绿；深色下提亮一档保证暗底上的可辨识性与对比度 */
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-[18px] bg-brand-600 px-5 py-3.5 text-sm font-semibold text-white shadow-float transition duration-200 hover:bg-brand-700 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-[18px] bg-brand-600 px-5 py-3.5 text-sm font-semibold text-white shadow-float transition duration-200 hover:bg-brand-700 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50 dark:border dark:border-brand-400/50 dark:bg-brand-500/15 dark:text-brand-200 dark:hover:bg-brand-500/25;
   }
-  /* 主操作按钮统一用品牌绿，两种主题一致，去掉深色下的纯白反色块 */
   .btn-ink {
-    @apply inline-flex items-center justify-center gap-2 rounded-[18px] bg-brand-600 px-5 py-3.5 text-sm font-semibold text-white shadow-float transition duration-200 hover:bg-brand-700 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-[18px] bg-brand-600 px-5 py-3.5 text-sm font-semibold text-white shadow-float transition duration-200 hover:bg-brand-700 active:scale-[0.985] disabled:pointer-events-none disabled:opacity-50 dark:border dark:border-brand-400/50 dark:bg-brand-500/15 dark:text-brand-200 dark:hover:bg-brand-500/25;
   }
   .btn-soft {
     @apply inline-flex items-center justify-center gap-2 rounded-[18px] border border-slate-200/70 bg-white/70 px-4 py-3 text-sm font-semibold text-slate-700 transition duration-200 hover:bg-white active:scale-[0.985] disabled:pointer-events-none disabled:opacity-45 dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-200 dark:hover:bg-slate-800;
@@ -328,6 +331,16 @@ body {
   animation: progress-sweep 1.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
+/* 词库管理进入时：当前词库卡片的定位呼吸光圈，播两次后自动停 */
+@keyframes locate-glow {
+  0% { box-shadow: 0 0 0 0 rgb(47 125 102 / 0.45); }
+  70% { box-shadow: 0 0 0 10px rgb(47 125 102 / 0); }
+  100% { box-shadow: 0 0 0 0 rgb(47 125 102 / 0); }
+}
+.animate-locate-glow {
+  animation: locate-glow 1s ease-out 2;
+}
+
 /* 自定义滚动条：更细、更柔和 */
 ::-webkit-scrollbar {
   width: 8px;
@@ -339,6 +352,12 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(130, 116, 95, 0.48);
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
 }
 ::-webkit-scrollbar-track {
   background: transparent;

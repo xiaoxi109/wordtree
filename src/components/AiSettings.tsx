@@ -141,7 +141,7 @@ export function AiSettingsFields({ onToast }: { onToast: OnToast }) {
                 aria-hidden="true"
                 className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition ${
                   selected
-                    ? 'border-brand-600 bg-brand-600 text-white'
+                    ? 'border-brand-600 bg-brand-600 text-white dark:border-brand-400/50 dark:bg-brand-500/25 dark:text-brand-200'
                     : 'border-slate-300 bg-transparent dark:border-slate-600'
                 }`}
               >
@@ -273,7 +273,7 @@ function Badge({ tone, children }: { tone: 'system' | 'custom' | 'active'; child
     tone === 'system'
       ? 'border-amber-300/70 bg-amber-100/70 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/15 dark:text-amber-300'
       : tone === 'active'
-        ? 'border-brand-500/50 bg-brand-600 text-white dark:border-brand-400/40 dark:bg-brand-500'
+        ? 'border-brand-500/50 bg-brand-600 text-white dark:border-brand-400/50 dark:bg-brand-500/25 dark:text-brand-200'
         : 'border-slate-300/70 bg-slate-100/80 text-slate-600 dark:border-slate-600 dark:bg-slate-700/60 dark:text-slate-300'
   return (
     <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold leading-tight ${cls}`}>

@@ -1,43 +1,36 @@
-import { useMemo } from 'react'
+import { useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { AiSettingsFields } from '../components/AiSettings'
 import {
+  BookOpenIcon,
   CheckIcon,
   ChevronRightIcon,
   DownloadIcon,
   GearIcon,
-  MoonIcon,
-  SparklesIcon,
-  SunIcon,
-  TargetIcon,
+  PaletteIcon,
   UploadIcon,
 } from '../components/icons'
-import {
-  GRADE_RUNGS,
-  LEVEL_RUNGS,
-  gradeToLevel,
-  levelToGrades,
-  type Route,
-  type GradeRung,
-  type LevelRung,
-} from '../data/levels'
+import { Sheet } from '../components/Sheet'
+import { masteredKey } from '../data/lexicons'
+import { THEME_OPTIONS, themePreferenceLabel, type ThemePreference } from '../lib/theme'
 
-type Theme = 'light' | 'dark'
 type Toast = { id: number; msg: string; type: 'success' | 'error' | 'info' }
 type OnToast = (msg: string, type?: Toast['type']) => void
 
 /* ----------------------------- Sync progress ----------------------------- */
 function SyncProgressActions({
+  lexiconId,
   onToast,
   onImported,
 }: {
+  lexiconId: string
   onToast: OnToast
   onImported: (arr: string[]) => void
 }) {
   const exportProgress = async () => {
     try {
-      const data = localStorage.getItem('lexicore-mastered') || '[]'
+      const data = localStorage.getItem(masteredKey(lexiconId)) || '[]'
       const text = JSON.stringify(JSON.parse(data), null, 2)
       const filename = `lexicore-progress-${new Date().toISOString().slice(0, 10)}.json`
 
@@ -107,138 +100,70 @@ function SyncProgressActions({
   )
 }
 
-/** 设置（底部「我」标签的一级页）：学习路线、外观、学习数据、大模型入口。 */
+/** 设置（底部「我」标签的一级页）：词库管理、外观、学习数据、大模型入口。 */
 export default function SettingsView({
-  theme,
+  themePref,
   aiEnabled,
   masteredCount: _masteredCount,
-  onToggleTheme,
+  lexiconId,
+  currentLexiconName,
+  onOpenLexicons,
+  onThemeChange,
   onOpenLlm,
-  onOpenRung,
   onToast,
   onImport,
-  route,
-  setRoute,
-  currentRung,
-  setCurrentRung,
 }: {
-  theme: Theme
+  themePref: ThemePreference
   aiEnabled: boolean
   masteredCount?: number
-  onToggleTheme: () => void
+  lexiconId: string
+  currentLexiconName: string
+  onOpenLexicons: () => void
+  onThemeChange: (theme: ThemePreference) => void
   onOpenLlm: () => void
-  onOpenRung: () => void
   onToast: OnToast
   onImport: (words: string[]) => void
-  route: Route
-  setRoute: (r: Route) => void
-  currentRung: GradeRung | LevelRung
-  setCurrentRung: (r: GradeRung | LevelRung) => void
 }) {
-  // 切换路线时，如果当前 rung 在新路线中不兼容，自动对齐：
-  //   - grade→level: 当前 rung 是 GradeRung，映射到对应的 LevelRung
-  //   - level→grade: 当前 rung 是 LevelRung，取对应的最低 GradeRung
-  const switchRoute = (next: Route) => {
-    if (next === route) return
-    if (next === 'level') {
-      // 从 grade 路线切到 level：当前 rung 是 GradeRung
-      setCurrentRung(gradeToLevel(currentRung as GradeRung))
-    } else {
-      // 从 level 路线切到 grade：当前 rung 是 LevelRung
-      const grades = levelToGrades(currentRung as LevelRung)
-      setCurrentRung(grades[0] ?? 'primary')
-    }
-    setRoute(next)
-  }
-
-  const rungLabel = useMemo(() => {
-    if (route === 'grade') {
-      const g = GRADE_RUNGS.find((r) => r.id === currentRung)
-      return g ? `${g.label}（${g.desc}）` : String(currentRung)
-    }
-    const l = LEVEL_RUNGS.find((r) => r.id === currentRung)
-    return l ? `${l.label}（${l.desc}）` : String(currentRung)
-  }, [route, currentRung])
-
+  const [themeSheetOpen, setThemeSheetOpen] = useState(false)
   return (
     <div className="pb-6">
       <div className="space-y-3">
-        {/* 学习路线 + 我的等级 */}
-        <section className="surface p-3">
-          <div className="flex items-start gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
-              <TargetIcon width={18} height={18} />
+        {/* 词库入口：当前选择显示在这里，实际选择在二级页完成 */}
+        <button
+          type="button"
+          onClick={onOpenLexicons}
+          className="surface flex w-full items-center gap-3 px-3 py-3 text-left transition active:scale-[0.995]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-brand-50 text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
+            <BookOpenIcon width={18} height={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold text-slate-800 dark:text-slate-100">词库</span>
+            <span className="mt-0.5 block truncate text-xs text-slate-400">
+              当前：{currentLexiconName} · 点击进入选择
             </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-bold text-slate-800 dark:text-slate-100">学习路线</p>
-              <p className="mt-0.5 text-xs text-slate-400">选择中式年级或西式等级，不影响已掌握的词</p>
-            </div>
-          </div>
-          <div className="mt-3 grid grid-cols-2 gap-1 rounded-[14px] bg-slate-900/[0.04] p-1 dark:bg-white/[0.06]">
-            {(
-              [
-                { id: 'level' as const, label: '西式阶梯', hint: 'Pre-A1 / B2' },
-                { id: 'grade' as const, label: '中式阶梯', hint: '小学 / 初三' },
-              ] as const
-            ).map((t) => (
-              <button
-                key={t.id}
-                onClick={() => switchRoute(t.id)}
-                aria-pressed={route === t.id}
-                className={`rounded-[11px] border px-2 py-2 text-xs font-bold transition duration-200 ${
-                  route === t.id
-                    ? 'border-brand-400/70 bg-brand-50 text-brand-700 shadow-sm dark:border-brand-400/45 dark:bg-brand-400/20 dark:text-brand-100'
-                    : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
-                }`}
-              >
-                {t.label}
-                <span className={`ml-1 text-[10px] font-normal ${route === t.id ? 'text-brand-600 dark:text-brand-200/70' : 'text-slate-400'}`}>
-                  {t.hint}
-                </span>
-              </button>
-            ))}
-          </div>
-          <button
-            onClick={onOpenRung}
-            className="mt-3 flex w-full items-center justify-between rounded-[14px] border border-slate-200/60 bg-white/70 px-3 py-2.5 text-left transition hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:hover:bg-slate-800"
-          >
-            <div className="min-w-0 flex items-center gap-2">
-              <SparklesIcon width={14} height={14} className="text-brand-500" />
-              <span className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">我的等级</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-[12px] text-slate-500 dark:text-slate-400">{rungLabel}</span>
-              <ChevronRightIcon width={14} height={14} className="shrink-0 text-slate-300" />
-            </div>
-          </button>
-        </section>
+          </span>
+          <ChevronRightIcon width={16} height={16} className="shrink-0 text-slate-300" />
+        </button>
 
-        <section className="surface flex items-center justify-between gap-3 px-3 py-2.5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
-              {theme === 'dark' ? <MoonIcon width={18} height={18} /> : <SunIcon width={18} height={18} />}
-            </span>
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-slate-800 dark:text-slate-100">深色模式</p>
-              <p className="mt-0.5 text-xs text-slate-400">切换浅色 / 深色外观</p>
-            </div>
-          </div>
-          <button
-            onClick={onToggleTheme}
-            role="switch"
-            aria-checked={theme === 'dark'}
-            aria-label="深色模式"
-            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors duration-300 ${
-              theme === 'dark' ? 'bg-brand-600' : 'bg-slate-300 dark:bg-slate-600'
-            }`}
-          >
-            <span
-              className={`absolute left-0.5 top-0.5 h-6 w-6 rounded-full bg-white shadow-sm transition-transform duration-300 ease-spring ${
-                theme === 'dark' ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </section>
+        <button
+          type="button"
+          onClick={() => setThemeSheetOpen(true)}
+          aria-haspopup="dialog"
+          className="surface flex w-full items-center gap-3 px-3 py-2.5 text-left transition active:scale-[0.995]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
+            <PaletteIcon width={18} height={18} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold text-slate-800 dark:text-slate-100">主题色</span>
+            <span className="mt-0.5 block text-xs text-slate-400">跟随系统、深色或浅色外观</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-slate-400 dark:text-slate-300">
+            {themePreferenceLabel(themePref)}
+            <ChevronRightIcon width={16} height={16} className="text-slate-300" />
+          </span>
+        </button>
 
         {aiEnabled && (
           <button
@@ -262,7 +187,7 @@ export default function SettingsView({
             导出 JSON 备份，或从备份恢复；导入会与现有进度合并。
           </p>
           <div className="mt-3">
-            <SyncProgressActions onToast={onToast} onImported={onImport} />
+            <SyncProgressActions lexiconId={lexiconId} onToast={onToast} onImported={onImport} />
           </div>
         </section>
 
@@ -271,6 +196,42 @@ export default function SettingsView({
         </p>
       </div>
 
+      <Sheet
+        open={themeSheetOpen}
+        onClose={() => setThemeSheetOpen(false)}
+        title="主题色"
+        subtitle="选择应用的外观偏好"
+      >
+        <div className="space-y-2 pb-1">
+          {THEME_OPTIONS.map((opt) => {
+            const active = themePref === opt.id
+            return (
+              <button
+                key={opt.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  onThemeChange(opt.id)
+                  setThemeSheetOpen(false)
+                }}
+                className={`flex w-full items-center gap-3 rounded-[18px] border px-4 py-3 text-left transition active:scale-[0.995] ${
+                  active
+                    ? 'border-brand-400/70 bg-brand-50 text-brand-700 shadow-sm dark:border-brand-400/45 dark:bg-brand-400/15 dark:text-brand-100'
+                    : 'border-slate-200/70 bg-white/70 text-slate-700 hover:bg-white dark:border-slate-700/60 dark:bg-slate-800/50 dark:text-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold">{opt.label}</span>
+                  <span className="mt-0.5 block text-xs opacity-70">{opt.description}</span>
+                </span>
+                {active && (
+                  <CheckIcon width={18} height={18} className="shrink-0 text-brand-600 dark:text-brand-300" />
+                )}
+              </button>
+            )
+          })}
+        </div>
+      </Sheet>
     </div>
   )
 }
@@ -280,66 +241,6 @@ export function LlmSettingsView({ onToast }: { onToast: OnToast }) {
   return (
     <div className="pb-8">
       <AiSettingsFields onToast={onToast} />
-    </div>
-  )
-}
-
-/** 我的等级（二级页）：按当前学习路线列出阶梯，选中即返回设置页。 */
-export function RungPickerView({
-  route,
-  currentRung,
-  setCurrentRung,
-  onDone,
-}: {
-  route: Route
-  currentRung: GradeRung | LevelRung
-  setCurrentRung: (r: GradeRung | LevelRung) => void
-  onDone: () => void
-}) {
-  // C2 为预留档，暂不提供选择
-  const options = (route === 'grade' ? GRADE_RUNGS : LEVEL_RUNGS).filter((r) => r.id !== 'C2')
-  return (
-    <div className="pb-8">
-      <p className="mb-2.5 text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-        {route === 'grade' ? '中式阶梯' : '西式阶梯'} · 词表默认显示当前等级及以下的词
-      </p>
-      <div className="space-y-1.5">
-        {options.map((r) => {
-          const selected = r.id === currentRung
-          return (
-            <button
-              key={r.id}
-              type="button"
-              onClick={() => {
-                setCurrentRung(r.id as GradeRung | LevelRung)
-                onDone()
-              }}
-              className={`surface flex w-full items-center gap-3 px-3 py-2.5 text-left transition active:scale-[0.995] ${
-                selected ? 'ring-1 ring-brand-400/60' : ''
-              }`}
-            >
-              <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition ${
-                  selected
-                    ? 'border-brand-600 bg-brand-600 text-white'
-                    : 'border-slate-300 bg-transparent dark:border-slate-600'
-                }`}
-              >
-                {selected && <CheckIcon width={12} height={12} />}
-              </span>
-              <span className="flex min-w-0 flex-1 items-baseline gap-2">
-                <span className="shrink-0 text-sm font-bold text-slate-800 dark:text-slate-100">{r.label}</span>
-                <span className="min-w-0 truncate text-xs text-slate-400">{r.desc}</span>
-              </span>
-              {selected && (
-                <span className="shrink-0 rounded-full bg-brand-50 px-2 py-0.5 text-[10px] font-bold text-brand-700 dark:bg-brand-500/10 dark:text-brand-300">
-                  使用中
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
     </div>
   )
 }

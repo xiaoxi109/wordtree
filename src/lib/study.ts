@@ -52,6 +52,8 @@ export interface StudyBuildOptions {
   masteredOnly?: boolean
   limit?: number
   now?: number
+  /** 外部词库词池；不传则用 CORE_WORDS。 */
+  pool?: Word[]
 }
 
 const STORAGE_KEY = 'lexicore-study'
@@ -281,7 +283,7 @@ export function buildStudySession(opts: StudyBuildOptions): StudyCard[] {
   }
 
   // 背词只抽课程词表；用户主动标记过的词典扩展词会经 review 队列进入复习
-  const base = opts.source === 'pep' ? pepWords() : CORE_WORDS
+  const base = opts.pool ?? (opts.source === 'pep' ? pepWords() : CORE_WORDS)
   const scoped = base.filter((w) =>
     opts.scope === 'all'
       ? true

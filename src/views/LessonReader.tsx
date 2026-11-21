@@ -529,7 +529,7 @@ export default function LessonReader({
                 <button
                   onClick={queue.toggle}
                   aria-label={queue.playing ? '暂停' : '播放'}
-                  className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-600 text-white shadow-soft transition active:scale-95"
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-600 text-white shadow-soft transition active:scale-95 dark:border dark:border-brand-400/50 dark:bg-brand-500/15 dark:text-brand-200 dark:shadow-none"
                 >
                   {queue.preparing ? (
                     <SpinnerIcon width={20} height={20} className="animate-spin" />

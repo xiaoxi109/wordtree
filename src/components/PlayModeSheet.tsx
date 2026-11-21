@@ -41,14 +41,14 @@ export function PlayModeSheet({ open, onClose }: { open: boolean; onClose: () =>
               aria-pressed={active}
               className={`flex w-full items-start gap-3 rounded-[18px] border px-3.5 py-3 text-left transition active:scale-[0.995] ${
                 active
-                  ? 'border-brand-400 bg-brand-50/80 shadow-soft dark:border-brand-500/60 dark:bg-brand-500/10'
+                  ? 'border-brand-400 bg-brand-50/80 shadow-soft dark:border-brand-400/40 dark:bg-brand-500/10 dark:shadow-none'
                   : 'border-slate-200/70 bg-white/70 hover:border-brand-300 dark:border-slate-700/60 dark:bg-slate-800/40'
               }`}
             >
               <span
                 className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] ${
                   active
-                    ? 'bg-brand-600 text-white'
+                    ? 'bg-brand-600 text-white dark:bg-brand-500/20 dark:text-brand-200'
                     : 'bg-slate-100 text-slate-500 dark:bg-white/10 dark:text-slate-300'
                 }`}
               >
@@ -88,7 +88,7 @@ export function PlayModeSheet({ open, onClose }: { open: boolean; onClose: () =>
                   aria-pressed={on}
                   className={`rounded-full border px-3 py-1.5 text-[12px] font-semibold transition active:scale-95 ${
                     on
-                      ? 'border-brand-500 bg-brand-600 text-white'
+                      ? 'border-brand-500 bg-brand-600 text-white dark:border-brand-400/40 dark:bg-brand-500/15 dark:text-brand-200'
                       : 'border-slate-200/70 bg-white/70 text-slate-600 hover:border-brand-300 dark:border-slate-600 dark:bg-white/5 dark:text-slate-300'
                   }`}
                 >
