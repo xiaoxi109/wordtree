@@ -4,6 +4,7 @@ import { ALL_WORDS } from '../data'
 import { clearReviewWords, pushReviewWord } from './review'
 import { wordKey } from './cluster'
 import {
+  BOX_INTERVALS_DAYS,
   applyStudyGrade,
   buildStudySession,
   clearStudyRecords,
@@ -25,35 +26,52 @@ describe('背词复习计划', () => {
     clearStudyRecords()
   })
 
-  it('认识：盒号递增，间隔按 1/2/4/8/16/30 天拉长', () => {
+  it('认识：盒号递增，FSRS 稳定性与间隔单调增长', () => {
     const r1 = applyStudyGrade('alpha', 'good', NOW)
     expect(r1.box).toBe(0)
-    expect(r1.dueAt).toBe(NOW + DAY)
+    expect(r1.stability).toBeGreaterThan(0)
+    expect(r1.difficulty).toBeGreaterThanOrEqual(1)
+    expect(r1.dueAt).toBeGreaterThan(NOW)
     expect(r1.lapses).toBe(0)
 
-    const r2 = applyStudyGrade('alpha', 'good', NOW + DAY)
+    const r2 = applyStudyGrade('alpha', 'good', r1.dueAt)
     expect(r2.box).toBe(1)
-    expect(r2.dueAt).toBe(NOW + DAY + 2 * DAY)
-    expect(goodIntervalDays('alpha')).toBe(4)
+    expect(r2.stability).toBeGreaterThan(r1.stability)
+    expect(r2.dueAt).toBeGreaterThan(r1.dueAt)
+    expect(goodIntervalDays('alpha', r2.dueAt)).toBeGreaterThanOrEqual(1)
   })
 
-  it('模糊与不认识：都重置回第 0 盒（1 天后）', () => {
-    applyStudyGrade('beta', 'good', NOW)
-    applyStudyGrade('beta', 'good', NOW + DAY)
-    const hard = applyStudyGrade('beta', 'hard', NOW + 2 * DAY)
+  it('模糊与不认识：盒号归零、lapses 只在再次不认识时累加', () => {
+    const good = applyStudyGrade('beta', 'good', NOW)
+    applyStudyGrade('beta', 'good', good.dueAt)
+    const hard = applyStudyGrade('beta', 'hard', good.dueAt)
     expect(hard.box).toBe(0)
-    expect(hard.dueAt).toBe(NOW + 2 * DAY + DAY)
+    expect(hard.lapses).toBe(0)
 
-    const again = applyStudyGrade('beta', 'again', NOW + 3 * DAY)
+    const again = applyStudyGrade('beta', 'again', hard.dueAt)
     expect(again.box).toBe(0)
     expect(again.lapses).toBe(1)
-    expect(again.dueAt).toBe(NOW + 3 * DAY + DAY)
+    expect(again.dueAt).toBeGreaterThan(hard.lastAt)
+    // 遗忘后稳定性应比遗忘前低
+    expect(again.stability).toBeLessThan(hard.stability)
+  })
+
+  it('旧记录（无 FSRS 字段）读取时按盒号迁移，不丢进度', () => {
+    const key = 'legacy'
+    localStorage.setItem('lexicore-study', JSON.stringify({
+      [key]: { key, box: 3, dueAt: NOW - DAY, lastAt: NOW - 2 * DAY, seen: 4, lapses: 1 },
+    }))
+    const before = getStudyRecords()[key]
+    expect(before.stability).toBe(BOX_INTERVALS_DAYS[3])
+    expect(before.difficulty).toBeGreaterThanOrEqual(1)
+    expect(before.seen).toBe(4)
+    expect(before.lapses).toBe(1)
   })
 
   it('到期数量与今日已背统计', () => {
-    applyStudyGrade('gamma', 'good', NOW)
+    const rec = applyStudyGrade('gamma', 'good', NOW)
     expect(getDueCount(NOW)).toBe(0)
-    expect(getDueCount(NOW + DAY)).toBe(1)
+    expect(getDueCount(rec.dueAt)).toBe(1)
     expect(getTodayStudiedCount(NOW)).toBe(1)
     expect(Object.keys(getStudyRecords())).toContain('gamma')
   })
@@ -198,11 +216,12 @@ describe('到期统计口径', () => {
   })
 
   it('传入 masteredSet 时只统计已掌握的到期词', () => {
-    applyStudyGrade(wordKey(first.word), 'good', NOW)
-    applyStudyGrade(wordKey(second.word), 'good', NOW)
+    const r1 = applyStudyGrade(wordKey(first.word), 'good', NOW)
+    const r2 = applyStudyGrade(wordKey(second.word), 'good', NOW)
+    const dueTime = Math.max(r1.dueAt, r2.dueAt)
 
-    expect(getDueCount(NOW + DAY)).toBe(2)
-    expect(getDueCount(NOW + DAY, new Set([first.word]))).toBe(1)
-    expect(getDueCount(NOW + DAY, new Set())).toBe(0)
+    expect(getDueCount(dueTime)).toBe(2)
+    expect(getDueCount(dueTime, new Set([first.word]))).toBe(1)
+    expect(getDueCount(dueTime, new Set())).toBe(0)
   })
 })

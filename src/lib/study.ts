@@ -4,6 +4,7 @@ import { GRADES, wordsByGrade, type GradeId } from '../data/grades'
 import type { Level, Word } from '../data/types'
 import { wordKey } from './cluster'
 import { getReviewWords, type ReviewWord } from './review'
+import { initialDifficulty, review as fsrsReview } from './fsrs'
 
 /** 背词结果的三个档位：不认识 / 模糊 / 认识。 */
 export type StudyGrade = 'again' | 'hard' | 'good'
@@ -33,8 +34,12 @@ export interface StudyCard {
 
 export interface StudyRecord {
   key: string
-  /** Leitner 盒号：0=待重学，1~5 依次拉长间隔 */
+  /** 展示用的粗略等级（沿用旧 Leitner 盒号递增规则，不参与 FSRS 间隔计算） */
   box: number
+  /** FSRS 记忆稳定性（天）：R 降到目标留存时的天数 */
+  stability: number
+  /** FSRS 难度（1~10） */
+  difficulty: number
   dueAt: number
   lastAt: number
   seen: number
@@ -81,6 +86,20 @@ function isStudyRecord(v: unknown): v is StudyRecord {
   )
 }
 
+/** 旧记录（无 FSRS 字段）迁移：用旧盒号对应的间隔作 stability，难度取基准值。 */
+function migrateFsrs(rec: StudyRecord): StudyRecord {
+  if (typeof rec.stability === 'number' && Number.isFinite(rec.stability) && rec.stability > 0 &&
+      typeof rec.difficulty === 'number' && Number.isFinite(rec.difficulty)) {
+    return rec
+  }
+  const box = Math.min(MAX_BOX, Math.max(0, rec.box))
+  return {
+    ...rec,
+    stability: BOX_INTERVALS_DAYS[box],
+    difficulty: initialDifficulty(3),
+  }
+}
+
 function readRecords(): Record<string, StudyRecord> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -89,7 +108,7 @@ function readRecords(): Record<string, StudyRecord> {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     const out: Record<string, StudyRecord> = {}
     for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (isStudyRecord(value)) out[key] = value
+      if (isStudyRecord(value)) out[key] = migrateFsrs(value)
     }
     return out
   } catch {
@@ -109,35 +128,39 @@ export function getStudyRecords(): Record<string, StudyRecord> {
   return readRecords()
 }
 
-/** 记录一次背词结果，并按间隔重复序列安排下次复习时间。 */
+/** StudyGrade → FSRS 评分档位：again=1 / hard=2 / good=3（无 Easy） */
+function toFsrsGrade(grade: StudyGrade): 1 | 2 | 3 {
+  return grade === 'again' ? 1 : grade === 'hard' ? 2 : 3
+}
+
+/** 记录一次背词结果，并按 FSRS 计算下次复习时间。 */
 export function applyStudyGrade(key: string, grade: StudyGrade, now = Date.now()): StudyRecord {
   const records = readRecords()
   const prev = records[key]
-  let box = 0
-  let dueAt = now + BOX_INTERVALS_DAYS[0] * DAY // 默认 1 天后再来
-  let lapses = prev?.lapses ?? 0
 
-  if (grade === 'good') {
-    // 逐级推进 Leitner 盒号：首次 good 落在第 0 格（1 天后），
-    // again / hard 归零后从 0 重新爬，不再受累计 seen 次数影响。
-    box = Math.min(MAX_BOX, (prev?.box ?? -1) + 1)
-    dueAt = now + BOX_INTERVALS_DAYS[box] * DAY
-  } else if (grade === 'hard') {
-    box = 0
-    dueAt = now + BOX_INTERVALS_DAYS[0] * DAY
-  } else {
-    box = 0
-    dueAt = now + BOX_INTERVALS_DAYS[0] * DAY
-    lapses += 1
-  }
+  // 距上次复习的天数；新卡按 0 处理（走 FSRS 初始 S0/D0）
+  const elapsedDays = prev ? Math.max(0, (now - prev.lastAt) / DAY) : 0
+  const result = fsrsReview(
+    prev ? { stability: prev.stability, difficulty: prev.difficulty } : null,
+    toFsrsGrade(grade),
+    elapsedDays,
+  )
+
+  // box 仅用于展示的粗略等级：保留旧递增规则（good +1，其余归零）
+  const box =
+    grade === 'good'
+      ? Math.min(MAX_BOX, (prev?.box ?? -1) + 1)
+      : 0
 
   const next: StudyRecord = {
     key,
     box,
-    dueAt,
+    stability: result.stability,
+    difficulty: result.difficulty,
+    dueAt: now + result.interval * DAY,
     lastAt: now,
     seen: (prev?.seen ?? 0) + 1,
-    lapses,
+    lapses: (prev?.lapses ?? 0) + (grade === 'again' ? 1 : 0),
   }
   records[key] = next
   writeRecords(records)
@@ -145,10 +168,15 @@ export function applyStudyGrade(key: string, grade: StudyGrade, now = Date.now()
 }
 
 /** 这张卡如果点「认识」，下次隔多少天复习（用于按钮提示）。 */
-export function goodIntervalDays(key: string): number {
+export function goodIntervalDays(key: string, now = Date.now()): number {
   const record = readRecords()[key]
-  const nextBox = Math.min(MAX_BOX, (record?.box ?? -1) + 1) // 与 applyStudyGrade 的晋级口径一致
-  return BOX_INTERVALS_DAYS[nextBox]
+  if (!record || record.seen === 0) return fsrsReview(null, 3).interval
+  const elapsedDays = Math.max(0, (now - record.lastAt) / DAY)
+  return fsrsReview(
+    { stability: record.stability, difficulty: record.difficulty },
+    3,
+    elapsedDays,
+  ).interval
 }
 
 /**

@@ -14,10 +14,10 @@ import { DisplayModeToggle, useDisplayMode } from '../components/display'
 import { useSpeech } from '../hooks/useSpeech'
 import { appendWordEvent, directionFromDisplayMode } from '../lib/events'
 import type { Word } from '../data'
-import { CheckIcon, RotateCcwIcon, XIcon, EyeIcon, EyeOffIcon } from '../components/icons'
+import { CheckIcon, RotateCcwIcon, XIcon, EyeIcon, EyeOffIcon, BrainIcon } from '../components/icons'
 
-type Stats = { again: number; good: number }
-const EMPTY_STATS: Stats = { again: 0, good: 0 }
+type Stats = { again: number; hard: number; good: number }
+const EMPTY_STATS: Stats = { again: 0, hard: 0, good: 0 }
 
 function shuffleCards<T>(arr: T[]): T[] {
   const a = [...arr]
@@ -138,20 +138,22 @@ function WordStudyDeck({
   }
 
   const gradeCard = useCallback(
-    (grade: 'good' | 'again') => {
+    (grade: 'good' | 'hard' | 'again') => {
       const card = session?.[index]
       if (!card) return
       stop()
 
-      applyStudyGrade(card.key, grade === 'good' ? 'good' : 'again')
-      onApplyMark([card.word], grade === 'good' ? 'add' : 'remove')
+      // FSRS 三档评分：again 移出已掌握、good 保持已掌握、hard（有印象）不改变掌握状态
+      applyStudyGrade(card.key, grade)
+      if (grade === 'good') onApplyMark([card.word], 'add')
+      else if (grade === 'again') onApplyMark([card.word], 'remove')
 
       void appendWordEvent({
         word_key: card.key,
         word: card.word,
         direction: directionFromDisplayMode(displayMode),
         source: 'study',
-        grade: grade === 'good' ? 'known' : 'unknown',
+        grade: grade === 'good' ? 'known' : grade === 'hard' ? 'fuzzy' : 'unknown',
         reaction_ms: Date.now() - shownAt,
       }).catch((err) => console.error('写入学习事件失败:', err))
 
@@ -255,8 +257,10 @@ function WordStudyDeck({
         {/* 流式进度：不打断卡片，只显示累计判级 */}
         <div className="mb-2 flex shrink-0 items-center justify-between px-1 text-[11px] text-slate-400">
           <span>
-            已练 {stats.good + stats.again} · 认识{' '}
+            已练 {stats.good + stats.hard + stats.again} · 认识{' '}
             <span className="font-semibold text-brand-600 dark:text-brand-300">{stats.good}</span>
+            {' · '}有印象{' '}
+            <span className="font-semibold text-amber-500 dark:text-amber-300">{stats.hard}</span>
             {' · '}不认识{' '}
             <span className="font-semibold text-rose-500 dark:text-rose-300">{stats.again}</span>
           </span>
@@ -410,42 +414,51 @@ function WordStudyDeck({
         </div>
       </section>
 
-      {/* ── 3. 底部判级按钮：无背景块，整体上移，内容居中 ── */}
+      {/* ── 3. 底部判级按钮：三档 FSRS 评分（不认识/有印象/认识） ── */}
       <section className="shrink-0 pb-10 pt-1">
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <button
             type="button"
             onClick={() => gradeCard('again')}
-            className="flex items-center justify-center gap-2.5 rounded-[16px] border border-rose-200/60 bg-rose-50/80 px-3 py-4 transition active:scale-[0.98] dark:border-rose-500/25 dark:bg-rose-500/10"
+            className="flex flex-col items-center justify-center gap-1.5 rounded-[16px] border border-rose-200/60 bg-rose-50/80 px-2 py-3 transition active:scale-[0.98] dark:border-rose-500/25 dark:bg-rose-500/10"
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-rose-500 text-white shadow-sm">
               <XIcon width={16} height={16} />
             </span>
-            <div className="flex flex-col items-center">
-              <span className="text-[13px] font-bold text-rose-600 dark:text-rose-300">
-                不认识
-              </span>
-              <span className="text-[10px] text-rose-500/70">归入未掌握</span>
-            </div>
+            <span className="text-[13px] font-bold text-rose-600 dark:text-rose-300">
+              不认识
+            </span>
+            <span className="text-[10px] text-rose-500/70">1 天后</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => gradeCard('hard')}
+            className="flex flex-col items-center justify-center gap-1.5 rounded-[16px] border border-amber-200/60 bg-amber-50/80 px-2 py-3 transition active:scale-[0.98] dark:border-amber-500/25 dark:bg-amber-500/10"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500 text-white shadow-sm">
+              <BrainIcon width={16} height={16} />
+            </span>
+            <span className="text-[13px] font-bold text-amber-700 dark:text-amber-300">
+              有印象
+            </span>
+            <span className="text-[10px] text-amber-600/70">想了一下</span>
           </button>
           <button
             type="button"
             onClick={() => gradeCard('good')}
-            className="flex items-center justify-center gap-2.5 rounded-[16px] border border-brand-200/60 bg-brand-50/80 px-3 py-4 transition active:scale-[0.98] dark:border-brand-500/25 dark:bg-brand-500/10"
+            className="flex flex-col items-center justify-center gap-1.5 rounded-[16px] border border-brand-200/60 bg-brand-50/80 px-2 py-3 transition active:scale-[0.98] dark:border-brand-500/25 dark:bg-brand-500/10"
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white shadow-sm dark:bg-brand-500/25 dark:text-brand-200 dark:shadow-none">
               <CheckIcon width={16} height={16} />
             </span>
-            <div className="flex flex-col items-center">
-              <span className="text-[13px] font-bold text-brand-700 dark:text-brand-300">
-                认识
-              </span>
-              <span className="text-[10px] text-brand-600/70">
-                {card.stage === 'review'
-                  ? `下次 ${goodIntervalDays(card.key)} 天后`
-                  : '标记已掌握'}
-              </span>
-            </div>
+            <span className="text-[13px] font-bold text-brand-700 dark:text-brand-300">
+              认识
+            </span>
+            <span className="text-[10px] text-brand-600/70">
+              {card?.stage === 'review'
+                ? `${goodIntervalDays(card.key)} 天后`
+                : '标记已掌握'}
+            </span>
           </button>
         </div>
       </section>
@@ -468,7 +481,7 @@ function FinishScreen({
   onRestart: () => void
   empty?: boolean
 }) {
-  const total = stats.again + stats.good
+  const total = stats.again + stats.hard + stats.good
   return (
     <div className="rounded-[26px] border border-slate-200/60 bg-white/85 p-6 text-center shadow-card dark:border-slate-700/50 dark:bg-slate-800/60">
       {empty ? (
@@ -491,18 +504,24 @@ function FinishScreen({
           </p>
 
           {total > 0 && (
-            <div className="mt-4 grid grid-cols-2 gap-2">
-              <div className="rounded-[14px] border border-brand-200/60 bg-brand-50/60 py-2.5 dark:border-brand-500/20 dark:bg-brand-500/10">
-                <p className="font-display text-lg font-semibold text-brand-700 dark:text-brand-300">
-                  {stats.good}
-                </p>
-                <p className="text-[10px] text-brand-600/80 dark:text-brand-300/80">认识</p>
-              </div>
+            <div className="mt-4 grid grid-cols-3 gap-2">
               <div className="rounded-[14px] border border-rose-200/60 bg-rose-50/60 py-2.5 dark:border-rose-500/20 dark:bg-rose-500/10">
                 <p className="font-display text-lg font-semibold text-rose-700 dark:text-rose-300">
                   {stats.again}
                 </p>
                 <p className="text-[10px] text-rose-600/80 dark:text-rose-300/80">不认识</p>
+              </div>
+              <div className="rounded-[14px] border border-amber-200/60 bg-amber-50/60 py-2.5 dark:border-amber-500/20 dark:bg-amber-500/10">
+                <p className="font-display text-lg font-semibold text-amber-700 dark:text-amber-300">
+                  {stats.hard}
+                </p>
+                <p className="text-[10px] text-amber-600/80 dark:text-amber-300/80">有印象</p>
+              </div>
+              <div className="rounded-[14px] border border-brand-200/60 bg-brand-50/60 py-2.5 dark:border-brand-500/20 dark:bg-brand-500/10">
+                <p className="font-display text-lg font-semibold text-brand-700 dark:text-brand-300">
+                  {stats.good}
+                </p>
+                <p className="text-[10px] text-brand-600/80 dark:text-brand-300/80">认识</p>
               </div>
             </div>
           )}
