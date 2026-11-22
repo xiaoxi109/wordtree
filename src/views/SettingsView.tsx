@@ -1,128 +1,35 @@
 import { useState } from 'react'
-import { Capacitor } from '@capacitor/core'
-import { Filesystem, Directory, Encoding } from '@capacitor/filesystem'
 import { AiSettingsFields } from '../components/AiSettings'
 import {
   BookOpenIcon,
   CheckIcon,
   ChevronRightIcon,
-  DownloadIcon,
   GearIcon,
   PaletteIcon,
-  UploadIcon,
 } from '../components/icons'
 import { Sheet } from '../components/Sheet'
-import { masteredKey } from '../data/lexicons'
 import { THEME_OPTIONS, themePreferenceLabel, type ThemePreference } from '../lib/theme'
 
 type Toast = { id: number; msg: string; type: 'success' | 'error' | 'info' }
 type OnToast = (msg: string, type?: Toast['type']) => void
-
-/* ----------------------------- Sync progress ----------------------------- */
-function SyncProgressActions({
-  lexiconId,
-  onToast,
-  onImported,
-}: {
-  lexiconId: string
-  onToast: OnToast
-  onImported: (arr: string[]) => void
-}) {
-  const exportProgress = async () => {
-    try {
-      const data = localStorage.getItem(masteredKey(lexiconId)) || '[]'
-      const text = JSON.stringify(JSON.parse(data), null, 2)
-      const filename = `lexicore-progress-${new Date().toISOString().slice(0, 10)}.json`
-
-      if (Capacitor.isNativePlatform()) {
-        // Android WebView 不处理 blob: 下载，必须走原生 Filesystem 真正落盘，
-        // 否则界面报「成功」而用户拿不到任何文件。
-        await Filesystem.writeFile({
-          path: filename,
-          data: text,
-          directory: Directory.Documents,
-          encoding: Encoding.UTF8,
-        })
-        onToast(`已导出到 文档/${filename}`, 'success')
-        return
-      }
-
-      // 本地 vite 预览：保留浏览器下载，但等 click 完成后再 revoke。
-      const blob = new Blob([text], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-      onToast('已导出掌握进度', 'success')
-    } catch (err) {
-      console.error('导出进度失败:', err)
-      onToast('导出失败，请检查存储权限', 'error')
-    }
-  }
-
-  const importProgress = () => {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = 'application/json'
-    input.onchange = async () => {
-      const file = input.files?.[0]
-      if (!file) return
-      try {
-        const text = await file.text()
-        const arr = JSON.parse(text)
-        if (!Array.isArray(arr) || !arr.every((x) => typeof x === 'string')) {
-          throw new Error('格式错误')
-        }
-        onImported(arr as string[])
-        onToast(`已导入 ${arr.length} 个进度`, 'success')
-      } catch {
-        onToast('导入失败：文件格式不正确', 'error')
-      }
-    }
-    input.click()
-  }
-
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      <button onClick={exportProgress} className="btn-soft !text-[13px]">
-        <DownloadIcon width={15} height={15} />
-        导出进度
-      </button>
-      <button onClick={importProgress} className="btn-soft !text-[13px]">
-        <UploadIcon width={15} height={15} />
-        导入进度
-      </button>
-    </div>
-  )
-}
 
 /** 设置（底部「我」标签的一级页）：词库管理、外观、学习数据、大模型入口。 */
 export default function SettingsView({
   themePref,
   aiEnabled,
   masteredCount: _masteredCount,
-  lexiconId,
   currentLexiconName,
   onOpenLexicons,
   onThemeChange,
   onOpenLlm,
-  onToast,
-  onImport,
 }: {
   themePref: ThemePreference
   aiEnabled: boolean
   masteredCount?: number
-  lexiconId: string
   currentLexiconName: string
   onOpenLexicons: () => void
   onThemeChange: (theme: ThemePreference) => void
   onOpenLlm: () => void
-  onToast: OnToast
-  onImport: (words: string[]) => void
 }) {
   const [themeSheetOpen, setThemeSheetOpen] = useState(false)
   return (
@@ -180,16 +87,6 @@ export default function SettingsView({
             <ChevronRightIcon width={16} height={16} className="shrink-0 text-slate-300" />
           </button>
         )}
-
-        <section className="surface p-3">
-          <p className="text-sm font-bold text-slate-800 dark:text-slate-100">学习进度</p>
-          <p className="mt-0.5 text-xs leading-relaxed text-slate-400">
-            导出 JSON 备份，或从备份恢复；导入会与现有进度合并。
-          </p>
-          <div className="mt-3">
-            <SyncProgressActions lexiconId={lexiconId} onToast={onToast} onImported={onImport} />
-          </div>
-        </section>
 
         <p className="pt-1 text-center text-[11px] text-slate-400">
           词树 v{__APP_VERSION__} · 用你的词，AI 生文

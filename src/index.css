@@ -366,11 +366,17 @@ body {
 /* 主滚动容器是 App 自己的 div：移动端不需要显示原生滚动条，
    内容没填满时也不该出现一条灰色轨道。滚动能力保持不变。 */
 #app-scroll {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 #app-scroll::-webkit-scrollbar {
-  display: none;
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+#app-scroll::-webkit-scrollbar-thumb,
+#app-scroll::-webkit-scrollbar-track {
+  display: none !important;
 }
 
 /* 隐藏横向滚动条（等级轨 / 标签轨） */

@@ -30,6 +30,11 @@ public class MainActivity extends BridgeActivity {
         if (webView == null) {
             return;
         }
+        // WebView 自绘的原生滚动条不受页面 CSS 控制：长列表时只在顶部露出
+        // 一小截 thumb（track 被 CSS 设为透明），看起来像"滚动条跑到顶部"。
+        // 页面自身已负责滚动反馈，这里从原生层彻底关掉系统滚动条。
+        webView.setVerticalScrollBarEnabled(false);
+        webView.setHorizontalScrollBarEnabled(false);
         // 组合子类替换 WebViewClient：除 shouldInterceptRequest 外全部走 super，
         // 不破坏 Bridge 回调，也不会因重写其它方法而崩溃。
         webView.setWebViewClient(new CoopCoepClient(bridge));

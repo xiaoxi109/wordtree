@@ -20,6 +20,8 @@ export type SentenceSceneId =
   | 'weather'
   | 'mood'
   | 'learn'
+  | 'idiom'
+  | 'spoken'
 
 export interface SentenceScene {
   id: SentenceSceneId
@@ -44,6 +46,8 @@ export const SENTENCE_SCENES: SentenceScene[] = [
   { id: 'weather', label: '天气和穿衣', hint: '冷热、雨雪、加减衣' },
   { id: 'mood', label: '心情和感受', hint: '开心、担心、喜欢讨厌' },
   { id: 'learn', label: '学习和孩子', hint: '背书、作业、鼓励' },
+  { id: 'idiom', label: '习语谚语', hint: '地道习语、谚语、经典表达' },
+  { id: 'spoken', label: '地道口语', hint: '寒暄、反应、调侃、鼓励、收尾' },
 ]
 
 /** 源数据用元组，避免 600 条里重复写 id / 场景字段。 */

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CORE_WORDS } from '../data'
+import { SHORT_SENTENCE_TOTAL } from '../data/sentences'
 import { getDueCount } from '../lib/study'
 import { getSentenceMastered, subscribeSentenceProgress } from '../lib/sentenceProgress'
 import {
@@ -189,7 +190,7 @@ export default function HomeDashboard({
             <p className={ENTRY_TITLE}>短句</p>
           </div>
           <p className={ENTRY_SUB}>
-            600 句 · 已掌握 {sentenceMastered}
+            {SHORT_SENTENCE_TOTAL} 句 · 已掌握 {sentenceMastered}
           </p>
           <div className="mt-auto flex w-full items-center justify-end pt-1.5">
             <span className={ENTRY_GO}>

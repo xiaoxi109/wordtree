@@ -328,7 +328,7 @@ export default function App() {
     return () => window.removeEventListener(MASTERED_EVENT, onMastered)
   }, [recordStudyDay])
 
-  /** 批量增删掌握词（复习判级回流 / 导入进度）。 */
+  /** 批量增删掌握词（复习判级回流）。 */
   const applyMastered = useCallback((words: string[], mode: 'add' | 'remove') => {
     setMasteredMap((prev) => {
       const arr = prev[lexiconId] ?? []
@@ -340,13 +340,6 @@ export default function App() {
       if (next.size === arr.length) return prev
       return { ...prev, [lexiconId]: Array.from(next) }
     })
-  }, [lexiconId])
-
-  const importMastered = useCallback((words: string[]) => {
-    setMasteredMap((prev) => ({
-      ...prev,
-      [lexiconId]: Array.from(new Set([...(prev[lexiconId] ?? []), ...words])),
-    }))
   }, [lexiconId])
 
   const pushToast = useCallback((msg: string, type: Toast['type'] = 'success') => {
@@ -599,13 +592,10 @@ export default function App() {
                 themePref={themePref}
                 aiEnabled={AI_ENABLED}
                 masteredCount={masteredArr.length}
-                lexiconId={lexiconId}
                 currentLexiconName={getLexiconMeta(lexiconId)?.name ?? '词库'}
                 onOpenLexicons={() => pushPage({ kind: 'lexicons' })}
                 onThemeChange={setThemePref}
                 onOpenLlm={() => pushPage({ kind: 'llm' })}
-                onToast={pushToast}
-                onImport={importMastered}
               />
             )}
           </div>

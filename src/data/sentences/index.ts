@@ -2,15 +2,17 @@ import { SENTENCE_SCENES, type SceneData, type SentenceSceneId, type ShortSenten
 import { PART1 } from './part1'
 import { PART2 } from './part2'
 import { PART3 } from './part3'
+import { PART4 } from './part4'
+import { PART5 } from './part5'
 
 export { SENTENCE_SCENES } from './types'
 export type { SentenceScene, SentenceSceneId, ShortSentence } from './types'
 
 /** 三组场景数据合并成一份完整场景表。 */
-const RAW: SceneData = { ...PART1, ...PART2, ...PART3 } as SceneData
+const RAW: SceneData = { ...PART1, ...PART2, ...PART3, ...PART4, ...PART5 } as SceneData
 
 /**
- * 600 条短句。id 由「场景 + 场景内序号」生成（`food-01`），
+ * 890 条短句。id 由「场景 + 场景内序号」生成（`food-01`），
  * 数据里增删句子不会影响其他场景的 id，掌握记录因此不会串位。
  */
 export const SHORT_SENTENCES: ShortSentence[] = SENTENCE_SCENES.flatMap((scene) =>
@@ -43,6 +45,6 @@ export function searchSentences(query: string, list: ShortSentence[] = SHORT_SEN
   return list.filter((s) => s.zh.includes(q) || s.en.toLowerCase().includes(q))
 }
 
-if (SHORT_SENTENCE_TOTAL !== 600) {
-  console.warn(`[短句库] 期望 600 条，实际 ${SHORT_SENTENCE_TOTAL} 条`)
+if (SHORT_SENTENCE_TOTAL !== 890) {
+  console.warn(`[短句库] 期望 890 条，实际 ${SHORT_SENTENCE_TOTAL} 条`)
 }

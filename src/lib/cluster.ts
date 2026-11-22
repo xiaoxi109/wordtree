@@ -67,7 +67,7 @@ export function categoryOfKey(key: string): CategoryId | null {
 /** 构建已掌握词池：CEFR 主库 ∩ 掌握集，+ 人教词表 ∩ 掌握集，按规范化键去重。 */
 export function buildMasteredPool(masteredSet: Set<string>): PoolWord[] {
   const out = new Map<string, PoolWord>()
-  // 掌握记录来自多个入口（词库圆圈 / 文章点词 / 导入进度），词形可能有大小写、
+  // 掌握记录来自多个入口（词库圆圈 / 文章点词），词形可能有大小写、
   // 空格或标点差异。统一转成规范化键再匹配，避免「明明标记了却匹配不到词条」。
   const masteredKeys = new Set<string>()
   for (const raw of masteredSet) {
